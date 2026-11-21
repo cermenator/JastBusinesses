@@ -32,10 +32,220 @@ CREATE TABLE public.user_profiles (
     id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
     full_name TEXT NOT NULL,
     email TEXT NOT NULL UNIQUE,
-    role TEXT NOT NULL CHECK (role IN ('owner', 'branch_manager', 'bookkeeper')),
+    role TEXT NOT NULL CHECK (role IN ('owner', 'branch_manager', 'bookkeeper', 'staff')),
     business_id TEXT REFERENCES public.business_units(id), -- NULL for 'owner' (global access)
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- A staff account may be assigned to more than one operating business.
+CREATE TABLE public.user_business_access (
+    user_id UUID NOT NULL REFERENCES public.user_profiles(id) ON DELETE CASCADE,
+    business_id TEXT NOT NULL REFERENCES public.business_units(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (user_id, business_id)
+);
+
+CREATE OR REPLACE FUNCTION public.is_jasmin_owner()
+RETURNS BOOLEAN
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+    SELECT EXISTS (
+        SELECT 1
+        FROM public.user_profiles up
+        WHERE up.id = auth.uid()
+          AND up.role = 'owner'
+          AND up.full_name = 'Ma''am Jasmin Taurak'
+    );
+$$;
+
+CREATE OR REPLACE FUNCTION public.has_business_access(p_business_id TEXT)
+RETURNS BOOLEAN
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+    SELECT EXISTS (
+        SELECT 1
+        FROM public.user_profiles up
+        WHERE up.id = auth.uid()
+          AND (
+              up.role = 'owner'
+              OR up.business_id = p_business_id
+              OR EXISTS (
+                  SELECT 1
+                  FROM public.user_business_access uba
+                  WHERE uba.user_id = up.id
+                    AND uba.business_id = p_business_id
+              )
+          )
+    );
+$$;
+
+-- Owner-managed catalogs
+CREATE TABLE public.properties (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name TEXT NOT NULL,
+    address TEXT NOT NULL,
+    monthly_rent NUMERIC(14, 2) NOT NULL CHECK (monthly_rent >= 0),
+    details TEXT,
+    created_by UUID NOT NULL REFERENCES public.user_profiles(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE public.property_bookings (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    property_id UUID NOT NULL REFERENCES public.properties(id),
+    start_date DATE NOT NULL,
+    end_date DATE NOT NULL,
+    customer_name TEXT NOT NULL,
+    monthly_rent NUMERIC(14, 2) NOT NULL CHECK (monthly_rent >= 0),
+    status TEXT NOT NULL DEFAULT 'confirmed' CHECK (status IN ('confirmed', 'cancelled')),
+    processed_by UUID NOT NULL REFERENCES public.user_profiles(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (end_date >= start_date)
+);
+
+CREATE OR REPLACE FUNCTION public.prevent_property_booking_overlap()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+    IF NEW.status = 'confirmed' THEN
+        PERFORM 1
+        FROM public.properties
+        WHERE id = NEW.property_id
+        FOR UPDATE;
+
+        IF EXISTS (
+            SELECT 1
+            FROM public.property_bookings pb
+            WHERE pb.property_id = NEW.property_id
+              AND pb.status = 'confirmed'
+              AND pb.id IS DISTINCT FROM NEW.id
+              AND NEW.start_date <= pb.end_date
+              AND NEW.end_date >= pb.start_date
+        ) THEN
+            RAISE EXCEPTION 'This property is already booked for the selected date range.';
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER trg_prevent_property_booking_overlap
+BEFORE INSERT OR UPDATE ON public.property_bookings
+FOR EACH ROW EXECUTE FUNCTION public.prevent_property_booking_overlap();
+
+CREATE TABLE public.jewelry_inventory (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    sku TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    description TEXT,
+    unit_cost NUMERIC(14, 2) NOT NULL CHECK (unit_cost >= 0),
+    selling_price NUMERIC(14, 2) NOT NULL CHECK (selling_price >= 0),
+    quantity INTEGER NOT NULL DEFAULT 0 CHECK (quantity >= 0),
+    photo_paths TEXT[] NOT NULL DEFAULT '{}',
+    created_by UUID NOT NULL REFERENCES public.user_profiles(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE public.pickleball_courts (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name TEXT NOT NULL UNIQUE,
+    notes TEXT,
+    created_by UUID NOT NULL REFERENCES public.user_profiles(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Staff-entered activity for pickleball bookings and jewelry point-of-sale.
+CREATE TABLE public.court_bookings (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    court_id UUID NOT NULL REFERENCES public.pickleball_courts(id),
+    booking_date DATE NOT NULL,
+    start_time TIME NOT NULL,
+    end_time TIME NOT NULL,
+    customer_name TEXT NOT NULL,
+    amount NUMERIC(14, 2) NOT NULL DEFAULT 0 CHECK (amount >= 0),
+    status TEXT NOT NULL DEFAULT 'confirmed' CHECK (status IN ('confirmed', 'cancelled')),
+    processed_by UUID NOT NULL REFERENCES public.user_profiles(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (end_time > start_time)
+);
+
+CREATE TABLE public.jewelry_sales (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    inventory_item_id UUID NOT NULL REFERENCES public.jewelry_inventory(id),
+    quantity INTEGER NOT NULL CHECK (quantity > 0),
+    unit_price NUMERIC(14, 2) NOT NULL CHECK (unit_price >= 0),
+    customer_name TEXT NOT NULL,
+    processed_by UUID NOT NULL REFERENCES public.user_profiles(id),
+    sold_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE OR REPLACE FUNCTION public.prevent_court_booking_overlap()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+    IF NEW.status = 'confirmed' THEN
+        PERFORM 1
+        FROM public.pickleball_courts
+        WHERE id = NEW.court_id
+        FOR UPDATE;
+
+        IF EXISTS (
+            SELECT 1
+            FROM public.court_bookings cb
+            WHERE cb.court_id = NEW.court_id
+              AND cb.booking_date = NEW.booking_date
+              AND cb.status = 'confirmed'
+              AND cb.id IS DISTINCT FROM NEW.id
+              AND NEW.start_time < cb.end_time
+              AND NEW.end_time > cb.start_time
+        ) THEN
+            RAISE EXCEPTION 'This court is already booked for the selected time.';
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER trg_prevent_court_booking_overlap
+BEFORE INSERT OR UPDATE ON public.court_bookings
+FOR EACH ROW EXECUTE FUNCTION public.prevent_court_booking_overlap();
+
+CREATE OR REPLACE FUNCTION public.decrement_jewelry_inventory_for_sale()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+    UPDATE public.jewelry_inventory
+    SET quantity = quantity - NEW.quantity,
+        updated_at = NOW()
+    WHERE id = NEW.inventory_item_id
+      AND quantity >= NEW.quantity;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Insufficient jewelry inventory for this sale.';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER trg_decrement_jewelry_inventory_for_sale
+BEFORE INSERT ON public.jewelry_sales
+FOR EACH ROW EXECUTE FUNCTION public.decrement_jewelry_inventory_for_sale();
 
 -- 3. TRANSACTIONS TABLE (6-Step Pipeline & BIR E-Invoicing Fields)
 CREATE TABLE public.transactions (
@@ -169,6 +379,13 @@ FOR EACH ROW EXECUTE FUNCTION log_transaction_audit();
 -- 7. ROW-LEVEL SECURITY (RLS) POLICIES FOR MULTI-BUSINESS ISOLATION
 ALTER TABLE public.business_units ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.user_profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.user_business_access ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.properties ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.property_bookings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.jewelry_inventory ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.pickleball_courts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.court_bookings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.jewelry_sales ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.transactions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
 
@@ -184,51 +401,154 @@ USING (
     EXISTS (SELECT 1 FROM public.user_profiles up WHERE up.id = auth.uid() AND up.role = 'owner')
 );
 
+CREATE POLICY "Users read their own business access"
+ON public.user_business_access FOR SELECT TO authenticated
+USING (user_id = auth.uid() OR public.is_jasmin_owner());
+
+CREATE POLICY "Jasmin manages staff business access"
+ON public.user_business_access FOR ALL TO authenticated
+USING (public.is_jasmin_owner())
+WITH CHECK (public.is_jasmin_owner());
+
+CREATE POLICY "Jasmin manages property catalog"
+ON public.properties FOR ALL TO authenticated
+USING (public.is_jasmin_owner())
+WITH CHECK (public.is_jasmin_owner());
+
+CREATE POLICY "Real estate staff can view properties"
+ON public.properties FOR SELECT TO authenticated
+USING (public.has_business_access('real_estate'));
+
+CREATE POLICY "Real estate staff can view property bookings"
+ON public.property_bookings FOR SELECT TO authenticated
+USING (public.has_business_access('real_estate'));
+
+CREATE POLICY "Real estate staff can process property bookings"
+ON public.property_bookings FOR INSERT TO authenticated
+WITH CHECK (
+    public.has_business_access('real_estate')
+    AND processed_by = auth.uid()
+);
+
+CREATE POLICY "Real estate staff can update property bookings"
+ON public.property_bookings FOR UPDATE TO authenticated
+USING (public.has_business_access('real_estate'))
+WITH CHECK (public.has_business_access('real_estate'));
+
+CREATE POLICY "Jewelry staff can view inventory"
+ON public.jewelry_inventory FOR SELECT TO authenticated
+USING (public.has_business_access('jewelry'));
+
+CREATE POLICY "Jasmin manages jewelry inventory"
+ON public.jewelry_inventory FOR ALL TO authenticated
+USING (public.is_jasmin_owner())
+WITH CHECK (public.is_jasmin_owner());
+
+CREATE POLICY "Pickleball staff can view courts"
+ON public.pickleball_courts FOR SELECT TO authenticated
+USING (public.has_business_access('pickleball'));
+
+CREATE POLICY "Jasmin manages pickleball courts"
+ON public.pickleball_courts FOR ALL TO authenticated
+USING (public.is_jasmin_owner())
+WITH CHECK (public.is_jasmin_owner());
+
+CREATE POLICY "Pickleball staff view bookings"
+ON public.court_bookings FOR SELECT TO authenticated
+USING (public.has_business_access('pickleball'));
+
+CREATE POLICY "Pickleball staff process bookings"
+ON public.court_bookings FOR INSERT TO authenticated
+WITH CHECK (
+    public.has_business_access('pickleball')
+    AND processed_by = auth.uid()
+);
+
+CREATE POLICY "Pickleball staff update bookings"
+ON public.court_bookings FOR UPDATE TO authenticated
+USING (public.has_business_access('pickleball'))
+WITH CHECK (public.has_business_access('pickleball'));
+
+CREATE POLICY "Jewelry staff view sales"
+ON public.jewelry_sales FOR SELECT TO authenticated
+USING (public.has_business_access('jewelry'));
+
+CREATE POLICY "Jewelry staff process sales"
+ON public.jewelry_sales FOR INSERT TO authenticated
+WITH CHECK (
+    public.has_business_access('jewelry')
+    AND processed_by = auth.uid()
+);
+
 -- Transactions SELECT isolation: Owner sees all; staff see ONLY their assigned business_id
 CREATE POLICY "Strict multi-business SELECT isolation"
 ON public.transactions FOR SELECT TO authenticated
 USING (
-    EXISTS (
-        SELECT 1 FROM public.user_profiles up
-        WHERE up.id = auth.uid()
-        AND (up.role = 'owner' OR up.business_id = transactions.business_id)
-    )
+    public.has_business_access(transactions.business_id)
 );
 
 -- Transactions INSERT isolation: Staff can only insert into their own business_id
 CREATE POLICY "Strict multi-business INSERT isolation"
 ON public.transactions FOR INSERT TO authenticated
 WITH CHECK (
-    EXISTS (
-        SELECT 1 FROM public.user_profiles up
-        WHERE up.id = auth.uid()
-        AND (up.role = 'owner' OR up.business_id = transactions.business_id)
-    )
+    public.has_business_access(transactions.business_id)
 );
 
 -- Transactions UPDATE isolation: Only Owner can approve/reject; staff can reconcile own branch
 CREATE POLICY "Owner approval and branch reconciliation UPDATE policy"
 ON public.transactions FOR UPDATE TO authenticated
 USING (
-    EXISTS (
-        SELECT 1 FROM public.user_profiles up
-        WHERE up.id = auth.uid()
-        AND (up.role = 'owner' OR up.business_id = transactions.business_id)
-    )
-);
+    public.has_business_access(transactions.business_id)
+)
+WITH CHECK (public.has_business_access(transactions.business_id));
 
 -- Audit logs: Owner sees all; staff see only their own business logs
 CREATE POLICY "Strict multi-business audit log isolation"
 ON public.audit_logs FOR SELECT TO authenticated
 USING (
-    EXISTS (
-        SELECT 1 FROM public.user_profiles up
-        WHERE up.id = auth.uid()
-        AND (up.role = 'owner' OR up.business_id = audit_logs.business_id)
-    )
+    public.has_business_access(audit_logs.business_id)
 );
 
 -- Storage Bucket for Receipts (Run in Supabase SQL Editor)
 INSERT INTO storage.buckets (id, name, public)
 VALUES ('receipt-vault', 'receipt-vault', false)
 ON CONFLICT (id) DO NOTHING;
+
+-- Private jewelry image storage. Save returned object paths in photo_paths.
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES ('jewelry-images', 'jewelry-images', false, 8388608, ARRAY['image/jpeg', 'image/png', 'image/webp', 'image/gif'])
+ON CONFLICT (id) DO UPDATE
+SET file_size_limit = EXCLUDED.file_size_limit,
+    allowed_mime_types = EXCLUDED.allowed_mime_types;
+
+CREATE POLICY "Jewelry staff can view jewelry photos"
+ON storage.objects FOR SELECT TO authenticated
+USING (
+    bucket_id = 'jewelry-images'
+    AND public.has_business_access('jewelry')
+);
+
+CREATE POLICY "Jasmin uploads jewelry photos"
+ON storage.objects FOR INSERT TO authenticated
+WITH CHECK (
+    bucket_id = 'jewelry-images'
+    AND public.is_jasmin_owner()
+);
+
+CREATE POLICY "Jasmin updates jewelry photos"
+ON storage.objects FOR UPDATE TO authenticated
+USING (
+    bucket_id = 'jewelry-images'
+    AND public.is_jasmin_owner()
+)
+WITH CHECK (
+    bucket_id = 'jewelry-images'
+    AND public.is_jasmin_owner()
+);
+
+CREATE POLICY "Jasmin deletes jewelry photos"
+ON storage.objects FOR DELETE TO authenticated
+USING (
+    bucket_id = 'jewelry-images'
+    AND public.is_jasmin_owner()
+);

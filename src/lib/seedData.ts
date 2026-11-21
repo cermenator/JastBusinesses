@@ -56,6 +56,14 @@ export const DEMO_USERS: UserAccount[] = [
     role: 'bookkeeper',
     businessId: 'jewelry',
   },
+  {
+    id: 'usr-staff-operations',
+    name: 'JAST Sales & Booking Staff',
+    title: 'Bookings — Real Estate & Pickleball • Sales — Jewelry',
+    role: 'staff',
+    businessId: null,
+    businessIds: ['real_estate', 'pickleball', 'jewelry'],
+  },
 ];
 
 export const INITIAL_TRANSACTIONS: TransactionRecord[] = [

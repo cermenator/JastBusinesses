@@ -13,6 +13,7 @@ import {
   AlertTriangle,
   History,
   Download,
+  PackageOpen,
 } from 'lucide-react';
 import {
   AuditLogEntry,
@@ -27,11 +28,12 @@ import {
   INITIAL_TRANSACTIONS,
 } from './lib/seedData';
 import { SixStepPipelineModal } from './components/SixStepPipelineModal';
+import { OperationsDashboard } from './components/OperationsDashboard';
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<UserAccount>(DEMO_USERS[0]);
   const [selectedBusinessFilter, setSelectedBusinessFilter] = useState<BusinessId | 'ALL'>('ALL');
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'approvals' | 'ledger' | 'audit'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'approvals' | 'ledger' | 'audit' | 'operations'>('dashboard');
   const [transactions, setTransactions] = useState<TransactionRecord[]>(INITIAL_TRANSACTIONS);
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>(INITIAL_AUDIT_LOGS);
   const [showPipelineModal, setShowPipelineModal] = useState(false);
@@ -42,7 +44,8 @@ export default function App() {
       if (selectedBusinessFilter === 'ALL') return transactions;
       return transactions.filter((t) => t.businessId === selectedBusinessFilter);
     }
-    return transactions.filter((t) => t.businessId === currentUser.businessId);
+    const accessibleBusinesses = currentUser.businessIds || (currentUser.businessId ? [currentUser.businessId] : []);
+    return transactions.filter((t) => accessibleBusinesses.includes(t.businessId));
   }, [transactions, currentUser, selectedBusinessFilter]);
 
   const rlsVisibleAuditLogs = useMemo(() => {
@@ -50,7 +53,8 @@ export default function App() {
       if (selectedBusinessFilter === 'ALL') return auditLogs;
       return auditLogs.filter((l) => l.businessId === selectedBusinessFilter);
     }
-    return auditLogs.filter((l) => l.businessId === currentUser.businessId);
+    const accessibleBusinesses = currentUser.businessIds || (currentUser.businessId ? [currentUser.businessId] : []);
+    return auditLogs.filter((l) => accessibleBusinesses.includes(l.businessId));
   }, [auditLogs, currentUser, selectedBusinessFilter]);
 
   const pendingApprovals = useMemo(
@@ -295,6 +299,16 @@ export default function App() {
               >
                 Immutable Audit Trail
               </button>
+              <button
+                onClick={() => setActiveTab('operations')}
+                className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition ${
+                  activeTab === 'operations'
+                    ? 'bg-indigo-600 text-white'
+                    : 'text-slate-300 hover:bg-slate-800'
+                }`}
+              >
+                <PackageOpen className="h-3.5 w-3.5" /> Operations
+              </button>
             </nav>
 
             {/* Tenant Scope Indicator */}
@@ -332,8 +346,12 @@ export default function App() {
             <div className="flex items-center gap-2.5">
               <Lock className="h-4 w-4 text-indigo-600 shrink-0" />
               <span>
-                <strong>Data Privacy Act (RA 10173) & PostgreSQL RLS Active:</strong> You are logged in as{' '}
-                <strong>{currentUser.name}</strong>. Records belonging to sister ventures are strictly isolated at the database layer.
+                <strong>PostgreSQL RLS access scope:</strong> You are logged in as{' '}
+                <strong>{currentUser.name}</strong>. Access is limited to{' '}
+                {(currentUser.businessIds || (currentUser.businessId ? [currentUser.businessId] : []))
+                  .map((id) => BUSINESS_UNITS.find((unit) => unit.id === id)?.name)
+                  .filter(Boolean)
+                  .join(' and ')}.
               </span>
             </div>
           </div>
@@ -689,6 +707,76 @@ export default function App() {
               </table>
             </div>
           </div>
+        )}
+
+        {activeTab === 'operations' && (
+          <OperationsDashboard
+            currentUser={currentUser}
+            onJewelrySale={(itemName, quantity, amount, customerName) => {
+              const referenceNo = `JAST-JW-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`;
+              const gateRequired = amount > BUSINESS_UNITS.find((unit) => unit.id === 'jewelry')!.approvalThreshold;
+              handleAddTransaction({
+                referenceNo,
+                businessId: 'jewelry',
+                txType: 'INCOME',
+                category: 'Bespoke Diamond & Gold Sales',
+                counterpartyName: customerName || 'Walk-in Customer',
+                description: `${itemName} × ${quantity}`,
+                amount,
+                vatAmount: Number(((amount / 1.12) * 0.12).toFixed(2)),
+                reconciled: false,
+                status: gateRequired ? 'PENDING_APPROVAL' : 'APPROVED',
+                gateReason: gateRequired
+                  ? 'Exceeds ₱30,000.00 automated threshold'
+                  : 'Auto-cleared within branch operational limit',
+                submittedBy: currentUser.name,
+                txDate: new Date().toISOString().slice(0, 10),
+              });
+            }}
+            onCourtBooking={(courtName, date, amount, customerName) => {
+              if (amount <= 0) return;
+              const referenceNo = `JAST-PB-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`;
+              const gateRequired = amount > BUSINESS_UNITS.find((unit) => unit.id === 'pickleball')!.approvalThreshold;
+              handleAddTransaction({
+                referenceNo,
+                businessId: 'pickleball',
+                txType: 'INCOME',
+                category: 'Court Rental & Open Play',
+                counterpartyName: customerName || 'Walk-in Customer',
+                description: `${courtName} booking on ${date}`,
+                amount,
+                vatAmount: Number(((amount / 1.12) * 0.12).toFixed(2)),
+                reconciled: false,
+                status: gateRequired ? 'PENDING_APPROVAL' : 'APPROVED',
+                gateReason: gateRequired
+                  ? 'Exceeds ₱30,000.00 automated threshold'
+                  : 'Auto-cleared within branch operational limit',
+                submittedBy: currentUser.name,
+                txDate: date,
+              });
+            }}
+            onPropertyBooking={(propertyName, address, startDate, endDate, monthlyRent, customerName) => {
+              const referenceNo = `JAST-RE-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`;
+              const gateRequired = monthlyRent > BUSINESS_UNITS.find((unit) => unit.id === 'real_estate')!.approvalThreshold;
+              handleAddTransaction({
+                referenceNo,
+                businessId: 'real_estate',
+                txType: 'INCOME',
+                category: 'Property Reservation & Downpayment',
+                counterpartyName: customerName,
+                description: `Property booking: ${propertyName}, ${address} (${startDate} to ${endDate}); monthly rent ${monthlyRent.toLocaleString('en-PH', { style: 'currency', currency: 'PHP' })}`,
+                amount: monthlyRent,
+                vatAmount: Number(((monthlyRent / 1.12) * 0.12).toFixed(2)),
+                reconciled: false,
+                status: gateRequired ? 'PENDING_APPROVAL' : 'APPROVED',
+                gateReason: gateRequired
+                  ? 'Exceeds ₱30,000.00 automated threshold'
+                  : 'Auto-cleared within branch operational limit',
+                submittedBy: currentUser.name,
+                txDate: startDate,
+              });
+            }}
+          />
         )}
       </main>
 

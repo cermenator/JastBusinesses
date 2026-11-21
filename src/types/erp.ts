@@ -1,6 +1,6 @@
 export type BusinessId = 'real_estate' | 'pickleball' | 'jewelry';
 
-export type UserRole = 'owner' | 'branch_manager' | 'bookkeeper';
+export type UserRole = 'owner' | 'branch_manager' | 'bookkeeper' | 'staff';
 
 export type TransactionType = 'INCOME' | 'EXPENSE' | 'INVENTORY_WRITEOFF' | 'ASSET_TRANSFER';
 
@@ -21,6 +21,7 @@ export interface UserAccount {
   title: string;
   role: UserRole;
   businessId: BusinessId | null; // null for Owner (global oversight)
+  businessIds?: BusinessId[];
 }
 
 export interface TransactionRecord {

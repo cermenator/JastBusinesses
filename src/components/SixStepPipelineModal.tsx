@@ -34,7 +34,7 @@ export const SixStepPipelineModal: React.FC<Props> = ({
 }) => {
   const [step, setStep] = useState(1);
   const [businessId, setBusinessId] = useState<BusinessId>(
-    currentUser.businessId || 'real_estate'
+    currentUser.businessId || currentUser.businessIds?.[0] || 'real_estate'
   );
   const [txType, setTxType] = useState<TransactionType>('INCOME');
   const [counterpartyName, setCounterpartyName] = useState('');
@@ -48,6 +48,10 @@ export const SixStepPipelineModal: React.FC<Props> = ({
 
   const numericAmount = parseFloat(amount) || 0;
   const vatAmount = Number(((numericAmount / 1.12) * 0.12).toFixed(2));
+  const allowedBusinesses = currentUser.businessIds || (currentUser.businessId ? [currentUser.businessId] : null);
+  const visibleBusinessUnits = allowedBusinesses
+    ? BUSINESS_UNITS.filter((business) => allowedBusinesses.includes(business.id))
+    : BUSINESS_UNITS;
   const unit = BUSINESS_UNITS.find((b) => b.id === businessId)!;
 
   // Owner Gate Logic matching PostgreSQL trigger
@@ -139,11 +143,11 @@ export const SixStepPipelineModal: React.FC<Props> = ({
                   <label className="block text-xs font-semibold text-slate-600 mb-1">Business Venture (RLS Tenant)</label>
                   <select
                     value={businessId}
-                    disabled={currentUser.businessId !== null}
+                    disabled={allowedBusinesses !== null && allowedBusinesses.length === 1}
                     onChange={(e) => setBusinessId(e.target.value as BusinessId)}
                     className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm bg-white disabled:bg-slate-100"
                   >
-                    {BUSINESS_UNITS.map((b) => (
+                    {visibleBusinessUnits.map((b) => (
                       <option key={b.id} value={b.id}>
                         {b.name}
                       </option>
