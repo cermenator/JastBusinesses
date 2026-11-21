@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>JAST Business Ventures — Multi-Business ERP & Owner Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body class="bg-slate-50 text-slate-900 antialiased">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useMemo } = React;
+
+    const BUSINESS_UNITS = [
+      {
+        id: 'real_estate',
+        name: 'JAST Real Estate & Properties',
+        code: 'JAST-RE',
+        description: 'High-capital lot sales, commercial leasing, and property asset rotations',
+        approvalThreshold: 30000,
+      },
+      {
+        id: 'pickleball',
+        name: 'JAST Pickleball Court & Hub',
+        code: 'JAST-PB',
+        description: 'High-volume daily court bookings, tournament fees, and pro-shop cash flow',
+        approvalThreshold: 30000,
+      },
+      {
+        id: 'jewelry',
+        name: 'JAST Fine Jewelry Vault',
+        code: 'JAST-JW',
+        description: 'Premium 18k/24k gold, diamonds, and bespoke inventory margins',
+        approvalThreshold: 30000,
+      },
+    ];
+
+    const DEMO_USERS = [
+      { id: 'usr-owner', name: "Ma'am Jasmin Taurak", title: 'Managing Owner (Global Access)', role: 'owner', businessId: null },
+      { id: 'usr-re', name: 'Elena Reyes', title: 'Bookkeeper — Real Estate', role: 'bookkeeper', businessId: 'real_estate' },
+      { id: 'usr-pb', name: 'Marco Santos', title: 'Court Coordinator — Pickleball', role: 'bookkeeper', businessId: 'pickleball' },
+      { id: 'usr-jw', name: 'Clarissa Lim', title: 'Vault Bookkeeper — Jewelry', role: 'bookkeeper', businessId: 'jewelry' },
+    ];
+
+    const INITIAL_TRANSACTIONS = [
+      {
+        id: 'tx-1001',
+        referenceNo: 'JAST-RE-2026-0041',
+        businessId: 'real_estate',
+        txType: 'INCOME',
+        category: 'Property Reservation & Downpayment',
+        counterpartyTin: '245-889-120-000',
+        counterpartyName: 'Engr. Roberto Villanueva',
+        description: 'Phase 2 Corner Lot Reservation & Initial Equity Payment',
+        amount: 185000,
+        vatAmount: 19821.43,
+        receiptFilename: 'OR_8841_Villanueva_Lot12.pdf',
+        reconciled: true,
+        status: 'APPROVED',
+        gateReason: 'Verified & signed off by Owner',
+        submittedBy: 'Elena Reyes',
+        txDate: '2026-11-18',
+      },
+      {
+        id: 'tx-1002',
+        referenceNo: 'JAST-RE-2026-0042',
+        businessId: 'real_estate',
+        txType: 'EXPENSE',
+        category: 'Site Development & Surveying',
+        counterpartyTin: '412-009-331-000',
+        counterpartyName: 'Agusan Geodetic & Engineering Services',
+        description: 'Subdivision perimeter drainage & geodetic monumentation',
+        amount: 48500,
+        vatAmount: 5196.43,
+        receiptFilename: 'SI_2026_AgusanGeodetic.pdf',
+        reconciled: false,
+        status: 'PENDING_APPROVAL',
+        gateReason: 'Exceeds ₱30,000.00 automated threshold',
+        submittedBy: 'Elena Reyes',
+        txDate: '2026-11-21',
+      },
+      {
+        id: 'tx-1003',
+        referenceNo: 'JAST-PB-2026-0318',
+        businessId: 'pickleball',
+        txType: 'INCOME',
+        category: 'Court Rental & Open Play',
+        counterpartyTin: '000-000-000-000',
+        counterpartyName: 'Walk-in & App Court Bookings (Batch #18)',
+        description: 'Courts 1-4 Peak & Off-Peak Daily Rental Settlement',
+        amount: 14800,
+        vatAmount: 1585.71,
+        receiptFilename: 'POS_ZRead_Nov20.pdf',
+        reconciled: true,
+        status: 'APPROVED',
+        gateReason: 'Auto-cleared within branch operational limit',
+        submittedBy: 'Marco Santos',
+        txDate: '2026-11-20',
+      },
+      {
+        id: 'tx-1004',
+        referenceNo: 'JAST-PB-2026-0319',
+        businessId: 'pickleball',
+        txType: 'EXPENSE',
+        category: 'Court Acrylic Resurfacing & Nets',
+        counterpartyTin: '318-774-901-000',
+        counterpartyName: 'Mindanao Sports Surfaces Inc.',
+        description: 'Tournament-grade non-slip acrylic topcoat & net posts for Court 2',
+        amount: 36000,
+        vatAmount: 3857.14,
+        receiptFilename: 'INV_9920_SportsSurfaces.jpg',
+        reconciled: false,
+        status: 'PENDING_APPROVAL',
+        gateReason: 'Exceeds ₱30,000.00 automated threshold',
+        submittedBy: 'Marco Santos',
+        txDate: '2026-11-21',
+      },
+      {
+        id: 'tx-1005',
+        referenceNo: 'JAST-JW-2026-0112',
+        businessId: 'jewelry',
+        txType: 'INCOME',
+        category: 'Bespoke Diamond & Gold Sales',
+        counterpartyTin: '198-552-740-000',
+        counterpartyName: 'Dr. Katrina Mercado',
+        description: '18K White Gold Solitaire Engagement Ring (1.2ct GIA)',
+        amount: 142000,
+        vatAmount: 15214.29,
+        receiptFilename: 'SI_JW_0112_Mercado.pdf',
+        reconciled: true,
+        status: 'APPROVED',
+        gateReason: 'Verified & signed off by Owner',
+        submittedBy: 'Clarissa Lim',
+        txDate: '2026-11-19',
+      },
+      {
+        id: 'tx-1006',
+        referenceNo: 'JAST-JW-2026-0113',
+        businessId: 'jewelry',
+        txType: 'INVENTORY_WRITEOFF',
+        category: 'Vault Smelting / Stone Recalibration',
+        counterpartyTin: '000-000-000-000',
+        counterpartyName: 'Internal Vault Audit Adjustment',
+        description: '14K Clasp repair & gold weight variance write-off (2.4g)',
+        amount: 9500,
+        vatAmount: 0,
+        receiptFilename: 'Vault_Memo_113.pdf',
+        reconciled: false,
+        status: 'PENDING_APPROVAL',
+        gateReason: 'Jewelry vault inventory write-off requires Owner authorization',
+        submittedBy: 'Clarissa Lim',
+        txDate: '2026-11-21',
+      },
+    ];
+
+    const INITIAL_AUDIT_LOGS = [
+      { id: 1, referenceNo: 'JAST-RE-2026-0041', businessId: 'real_estate', action: 'INSERT', actorName: 'Elena Reyes', transition: 'NEW → PENDING_APPROVAL', remarks: 'Exceeds ₱30,000.00 automated threshold', recordedAt: '2026-11-18 09:15:02' },
+      { id: 2, referenceNo: 'JAST-RE-2026-0041', businessId: 'real_estate', action: 'APPROVE', actorName: "Ma'am Jasmin Taurak", transition: 'PENDING_APPROVAL → APPROVED', remarks: 'Owner Gate cleared after OR verification', recordedAt: '2026-11-18 10:04:19' },
+      { id: 3, referenceNo: 'JAST-RE-2026-0042', businessId: 'real_estate', action: 'INSERT', actorName: 'Elena Reyes', transition: 'NEW → PENDING_APPROVAL', remarks: 'Exceeds ₱30,000.00 automated threshold', recordedAt: '2026-11-21 10:05:11' },
+      { id: 4, referenceNo: 'JAST-PB-2026-0318', businessId: 'pickleball', action: 'INSERT', actorName: 'Marco Santos', transition: 'NEW → APPROVED', remarks: 'Auto-cleared within branch operational limit', recordedAt: '2026-11-20 21:10:05' },
+      { id: 5, referenceNo: 'JAST-PB-2026-0319', businessId: 'pickleball', action: 'INSERT', actorName: 'Marco Santos', transition: 'NEW → PENDING_APPROVAL', remarks: 'Exceeds ₱30,000.00 automated threshold', recordedAt: '2026-11-21 11:42:33' },
+      { id: 6, referenceNo: 'JAST-JW-2026-0113', businessId: 'jewelry', action: 'INSERT', actorName: 'Clarissa Lim', transition: 'NEW → PENDING_APPROVAL', remarks: 'Jewelry vault inventory write-off requires Owner authorization', recordedAt: '2026-11-21 13:15:47' },
+    ];
+
+    function SixStepModal({ currentUser, onClose, onSubmit }) {
+      const [step, setStep] = useState(1);
+      const [businessId, setBusinessId] = useState(currentUser.businessId || 'real_estate');
+      const [txType, setTxType] = useState('INCOME');
+      const [counterpartyName, setCounterpartyName] = useState('');
+      const [counterpartyTin, setCounterpartyTin] = useState('');
+      const [amount, setAmount] = useState('');
+      const [txDate, setTxDate] = useState('2026-11-21');
+      const [receiptFilename, setReceiptFilename] = useState('');
+      const [category, setCategory] = useState('Operational Revenue');
+      const [description, setDescription] = useState('');
+      const [reconciled, setReconciled] = useState(true);
+
+      const numericAmount = parseFloat(amount) || 0;
+      const vatAmount = Number(((numericAmount / 1.12) * 0.12).toFixed(2));
+      const unit = BUSINESS_UNITS.find((b) => b.id === businessId);
+
+      const triggersGate =
+        numericAmount > unit.approvalThreshold ||
+        (businessId === 'jewelry' && txType === 'INVENTORY_WRITEOFF');
+
+      const gateReason =
+        numericAmount > unit.approvalThreshold
+          ? `Exceeds ₱${unit.approvalThreshold.toLocaleString()} automated threshold`
+          : businessId === 'jewelry' && txType === 'INVENTORY_WRITEOFF'
+          ? 'Jewelry vault inventory write-off requires Owner authorization'
+          : 'Auto-cleared within branch operational limit';
+
+      const generatedRef = `${unit.code}-2026-${Math.floor(1000 + Math.random() * 9000)}`;
+
+      const handleFinish = () => {
+        onSubmit({
+          referenceNo: generatedRef,
+          businessId,
+          txType,
+          category,
+          counterpartyTin: counterpartyTin || '000-000-000-000',
+          counterpartyName: counterpartyName || 'Walk-in Client',
+          description: description || `${category} entry via 6-Step Pipeline`,
+          amount: numericAmount,
+          vatAmount,
+          receiptFilename: receiptFilename || `OR_${generatedRef}.pdf`,
+          reconciled,
+          status: triggersGate ? 'PENDING_APPROVAL' : 'APPROVED',
+          gateReason,
+          submittedBy: currentUser.name,
+          txDate,
+        });
+        onClose();
+      };
+
+      const stepNames = ['1. Record', '2. Upload', '3. Categorize', '4. Owner Gate', '5. Reconcile', '6. Generate'];
+
+      return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-2xl overflow-hidden rounded-2xl bg-white shadow-2xl border border-slate-200">
+            <div className="flex items-center justify-between bg-slate-900 px-6 py-4 text-white">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wider text-indigo-300">Standardized Staff Pipeline</p>
+                <h2 className="text-lg font-bold">6-Step Financial Entry & BIR CAS Intake</h2>
+              </div>
+              <button onClick={onClose} className="rounded-lg px-2.5 py-1 text-sm text-slate-300 hover:bg-slate-800">✕</button>
+            </div>
+
+            <div className="grid grid-cols-6 border-b border-slate-200 bg-slate-50 px-4 py-3 text-center">
+              {stepNames.map((label, idx) => {
+                const sNum = idx + 1;
+                return (
+                  <div key={label} className="flex flex-col items-center">
+                    <span className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold ${step === sNum ? 'bg-indigo-600 text-white' : step > sNum ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-600'}`}>
+                      {step > sNum ? '✓' : sNum}
+                    </span>
+                    <span className="mt-1 text-[11px] font-medium text-slate-700">{label}</span>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="p-6 space-y-4 min-h-[260px]">
+              {step === 1 && (
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">Business Venture (RLS Tenant)</label>
+                    <select value={businessId} disabled={currentUser.businessId !== null} onChange={(e) => setBusinessId(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm bg-white disabled:bg-slate-100">
+                      {BUSINESS_UNITS.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">Transaction Type</label>
+                    <select value={txType} onChange={(e) => setTxType(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm bg-white">
+                      <option value="INCOME">Income / Sales Receipt</option>
+                      <option value="EXPENSE">Operational Expense</option>
+                      <option value="INVENTORY_WRITEOFF">Inventory Write-Off / Adjustment</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">Gross Amount (PHP ₱)</label>
+                    <input type="number" placeholder="e.g. 42000" value={amount} onChange={(e) => setAmount(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">Transaction Date</label>
+                    <input type="date" value={txDate} onChange={(e) => setTxDate(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">Client / Vendor Name</label>
+                    <input type="text" placeholder="Full name or company" value={counterpartyName} onChange={(e) => setCounterpartyName(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">BIR TIN (E-Invoicing)</label>
+                    <input type="text" placeholder="000-000-000-000" value={counterpartyTin} onChange={(e) => setCounterpartyTin(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                  </div>
+                </div>
+              )}
+
+              {step === 2 && (
+                <div className="space-y-3">
+                  <h3 className="font-semibold text-slate-800">Upload Supporting Official Receipt / Invoice</h3>
+                  <label className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-indigo-300 bg-indigo-50/40 p-8 cursor-pointer hover:bg-indigo-50">
+                    <span className="text-sm font-semibold text-slate-800">{receiptFilename ? `Attached: ${receiptFilename}` : 'Select Receipt PDF or Photo'}</span>
+                    <span className="text-xs text-slate-500 mt-1">Stored in private bucket: /receipt-vault/{businessId}/</span>
+                    <input type="file" className="hidden" onChange={(e) => e.target.files?.[0] && setReceiptFilename(e.target.files[0].name)} />
+                  </label>
+                  <button type="button" onClick={() => setReceiptFilename(`OR_Scanned_${Date.now().toString().slice(-4)}.pdf`)} className="text-xs font-semibold text-indigo-600 hover:underline">
+                    + Simulate scanned receipt attachment
+                  </button>
+                </div>
+              )}
+
+              {step === 3 && (
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">Chart of Accounts Category</label>
+                    <select value={category} onChange={(e) => setCategory(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm bg-white">
+                      <option value="Property Reservation & Downpayment">Property Reservation & Downpayment</option>
+                      <option value="Court Rental & Open Play">Court Rental & Open Play</option>
+                      <option value="Bespoke Diamond & Gold Sales">Bespoke Diamond & Gold Sales</option>
+                      <option value="Facility Maintenance & Utilities">Facility Maintenance & Utilities</option>
+                      <option value="Vault Smelting / Stone Recalibration">Vault Smelting / Stone Recalibration</option>
+                      <option value="Operational Revenue">Operational Revenue</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">Particulars / Description</label>
+                    <textarea rows={3} placeholder="Enter lot details, court booking batch, or jewelry SKU..." value={description} onChange={(e) => setDescription(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                  </div>
+                </div>
+              )}
+
+              {step === 4 && (
+                <div className={`rounded-xl border p-5 ${triggersGate ? 'border-amber-300 bg-amber-50 text-amber-950' : 'border-emerald-300 bg-emerald-50 text-emerald-950'}`}>
+                  <h4 className="font-bold text-sm">{triggersGate ? '⚠️ OWNER APPROVAL GATE TRIGGERED' : '✅ GATE CLEARED FOR IMMEDIATE POSTING'}</h4>
+                  <p className="text-xs mt-1">{gateReason}</p>
+                  <p className="text-xs mt-2 font-mono">Rule: Amount ₱{numericAmount.toLocaleString()} vs Threshold ₱{unit.approvalThreshold.toLocaleString()}</p>
+                </div>
+              )}
+
+              {step === 5 && (
+                <div className="space-y-3">
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-2 text-sm">
+                    <div className="flex justify-between"><span>Gross Amount:</span><strong>₱{numericAmount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</strong></div>
+                    <div className="flex justify-between"><span>12% VAT Component (RR 11-2025):</span><span>₱{vatAmount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</span></div>
+                    <div className="flex justify-between"><span>Net of VAT:</span><span>₱{(numericAmount - vatAmount).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</span></div>
+                  </div>
+                  <label className="flex items-center gap-2 text-xs font-medium text-slate-700">
+                    <input type="checkbox" checked={reconciled} onChange={(e) => setReconciled(e.target.checked)} />
+                    Confirm physical cash / bank deposit matches receipt amount
+                  </label>
+                </div>
+              )}
+
+              {step === 6 && (
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-1.5 text-xs">
+                  <p className="font-bold text-indigo-700 text-sm">Ready to Commit to Central Financial Database</p>
+                  <p><strong>Reference:</strong> {generatedRef}</p>
+                  <p><strong>Venture:</strong> {unit.name}</p>
+                  <p><strong>Amount:</strong> ₱{numericAmount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+                  <p><strong>Database Status:</strong> {triggersGate ? 'PENDING_APPROVAL' : 'APPROVED'}</p>
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-between border-t border-slate-200 bg-slate-50 px-6 py-4">
+              <button disabled={step === 1} onClick={() => setStep((s) => s - 1)} className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-700 disabled:opacity-40">← Back</button>
+              {step < 6 ? (
+                <button disabled={step === 1 && numericAmount <= 0} onClick={() => setStep((s) => s + 1)} className="rounded-lg bg-indigo-600 px-5 py-2 text-xs font-semibold text-white disabled:opacity-40">Next Step →</button>
+              ) : (
+                <button onClick={handleFinish} className="rounded-lg bg-emerald-600 px-5 py-2 text-xs font-semibold text-white">Submit & Log to Ledger</button>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function App() {
+      const [currentUser, setCurrentUser] = useState(DEMO_USERS[0]);
+      const [businessFilter, setBusinessFilter] = useState('ALL');
+      const [activeTab, setActiveTab] = useState('dashboard');
+      const [transactions, setTransactions] = useState(INITIAL_TRANSACTIONS);
+      const [auditLogs, setAuditLogs] = useState(INITIAL_AUDIT_LOGS);
+      const [showModal, setShowModal] = useState(false);
+
+      const visibleTransactions = useMemo(() => {
+        if (currentUser.role === 'owner') {
+          return businessFilter === 'ALL' ? transactions : transactions.filter((t) => t.businessId === businessFilter);
+        }
+        return transactions.filter((t) => t.businessId === currentUser.businessId);
+      }, [transactions, currentUser, businessFilter]);
+
+      const visibleLogs = useMemo(() => {
+        if (currentUser.role === 'owner') {
+          return businessFilter === 'ALL' ? auditLogs : auditLogs.filter((l) => l.businessId === businessFilter);
+        }
+        return auditLogs.filter((l) => l.businessId === currentUser.businessId);
+      }, [auditLogs, currentUser, businessFilter]);
+
+      const pendingApprovals = useMemo(() => visibleTransactions.filter((t) => t.status === 'PENDING_APPROVAL'), [visibleTransactions]);
+
+      const metrics = useMemo(() => {
+        const approved = visibleTransactions.filter((t) => t.status === 'APPROVED');
+        const income = approved.filter((t) => t.txType === 'INCOME').reduce((a, b) => a + b.amount, 0);
+        const expense = approved.filter((t) => t.txType !== 'INCOME').reduce((a, b) => a + b.amount, 0);
+        const byBusiness = BUSINESS_UNITS.map((u) => {
+          const uTx = approved.filter((t) => t.businessId === u.id);
+          const rev = uTx.filter((t) => t.txType === 'INCOME').reduce((a, b) => a + b.amount, 0);
+          const exp = uTx.filter((t) => t.txType !== 'INCOME').reduce((a, b) => a + b.amount, 0);
+          return { ...u, revenue: rev, expenses: exp, net: rev - exp, count: uTx.length };
+        });
+        return { income, expense, net: income - expense, byBusiness };
+      }, [visibleTransactions]);
+
+      const handleUserSwitch = (id) => {
+        const u = DEMO_USERS.find((x) => x.id === id);
+        setCurrentUser(u);
+        setBusinessFilter(u.businessId || 'ALL');
+        if (u.role !== 'owner' && activeTab === 'approvals') setActiveTab('ledger');
+      };
+
+      const handleNewTx = (tx) => {
+        const created = { ...tx, id: `tx-${Date.now()}` };
+        setTransactions((prev) => [created, ...prev]);
+        setAuditLogs((prev) => [
+          {
+            id: prev.length + 1,
+            referenceNo: created.referenceNo,
+            businessId: created.businessId,
+            action: 'INSERT',
+            actorName: currentUser.name,
+            transition: `NEW → ${created.status}`,
+            remarks: created.gateReason,
+            recordedAt: new Date().toISOString().replace('T', ' ').slice(0, 19),
+          },
+          ...prev,
+        ]);
+      };
+
+      const handleGateDecision = (tx, decision) => {
+        setTransactions((prev) =>
+          prev.map((item) =>
+            item.id === tx.id
+              ? { ...item, status: decision, gateReason: decision === 'APPROVED' ? `Authorized by ${currentUser.name}` : `Rejected by ${currentUser.name}` }
+              : item
+          )
+        );
+        setAuditLogs((prev) => [
+          {
+            id: prev.length + 1,
+            referenceNo: tx.referenceNo,
+            businessId: tx.businessId,
+            action: decision === 'APPROVED' ? 'APPROVE' : 'REJECT',
+            actorName: currentUser.name,
+            transition: `PENDING_APPROVAL → ${decision}`,
+            remarks: decision === 'APPROVED' ? 'Owner Gate cleared after receipt review' : 'Rejected at Owner Gate',
+            recordedAt: new Date().toISOString().replace('T', ' ').slice(0, 19),
+          },
+          ...prev,
+        ]);
+      };
+
+      const exportCsv = () => {
+        const headers = ['Reference_No', 'Venture', 'Date', 'Type', 'Counterparty', 'TIN', 'Gross_PHP', 'VAT_PHP', 'Status'];
+        const rows = visibleTransactions.map((t) => [t.referenceNo, t.businessId.toUpperCase(), t.txDate, t.txType, `"${t.counterpartyName}"`, t.counterpartyTin, t.amount.toFixed(2), t.vatAmount.toFixed(2), t.status]);
+        const csv = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `JAST_BIR_CAS_Export_${new Date().toISOString().slice(0, 10)}.csv`;
+        a.click();
+      };
+
+      return (
+        <div className="min-h-screen">
+          <header className="sticky top-0 z-30 bg-slate-900 text-white shadow">
+            <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-4 py-3 sm:px-6">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-600 font-bold">JB</div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h1 className="text-base font-bold">JAST Business Ventures ERP</h1>
+                    <span className="rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] font-semibold text-emerald-300 border border-emerald-500/30">BIR CAS & RLS Ready</span>
+                  </div>
+                  <p className="text-xs text-slate-400">Centralized Owner Dashboard • Real Estate • Pickleball • Jewelry</p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2 rounded-xl bg-slate-800 px-3 py-1.5 border border-slate-700 text-xs">
+                  <span className="text-amber-400 font-semibold">🔒 Active Role:</span>
+                  <select value={currentUser.id} onChange={(e) => handleUserSwitch(e.target.value)} className="bg-transparent font-semibold text-white focus:outline-none">
+                    {DEMO_USERS.map((u) => <option key={u.id} value={u.id} className="bg-slate-900">{u.name} ({u.role.toUpperCase()})</option>)}
+                  </select>
+                </div>
+                <button onClick={() => setShowModal(true)} className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-semibold text-white hover:bg-indigo-500">
+                  + New 6-Step Entry
+                </button>
+              </div>
+            </div>
+
+            <div className="border-t border-slate-800 bg-slate-900/95">
+              <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-2 px-4 py-2 sm:px-6">
+                <nav className="flex items-center gap-1">
+                  <button onClick={() => setActiveTab('dashboard')} className={`rounded-lg px-3 py-1.5 text-xs font-medium ${activeTab === 'dashboard' ? 'bg-indigo-600 text-white' : 'text-slate-300 hover:bg-slate-800'}`}>Centralized Dashboard</button>
+                  {currentUser.role === 'owner' && (
+                    <button onClick={() => setActiveTab('approvals')} className={`rounded-lg px-3 py-1.5 text-xs font-medium ${activeTab === 'approvals' ? 'bg-indigo-600 text-white' : 'text-slate-300 hover:bg-slate-800'}`}>
+                      Owner Gate ({pendingApprovals.length})
+                    </button>
+                  )}
+                  <button onClick={() => setActiveTab('ledger')} className={`rounded-lg px-3 py-1.5 text-xs font-medium ${activeTab === 'ledger' ? 'bg-indigo-600 text-white' : 'text-slate-300 hover:bg-slate-800'}`}>Transaction Ledger</button>
+                  <button onClick={() => setActiveTab('audit')} className={`rounded-lg px-3 py-1.5 text-xs font-medium ${activeTab === 'audit' ? 'bg-indigo-600 text-white' : 'text-slate-300 hover:bg-slate-800'}`}>Immutable Audit Logs</button>
+                </nav>
+
+                <div className="text-xs">
+                  {currentUser.role === 'owner' ? (
+                    <select value={businessFilter} onChange={(e) => setBusinessFilter(e.target.value)} className="rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1 text-xs text-white">
+                      <option value="ALL">All JAST Ventures (Consolidated)</option>
+                      {BUSINESS_UNITS.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+                    </select>
+                  ) : (
+                    <span className="rounded-lg bg-amber-500/15 border border-amber-500/30 px-2.5 py-1 font-semibold text-amber-300">
+                      RLS Isolated: {BUSINESS_UNITS.find((b) => b.id === currentUser.businessId)?.name}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+          </header>
+
+          <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 space-y-6">
+            {currentUser.role !== 'owner' && (
+              <div className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-xs text-indigo-950">
+                <strong>Data Privacy Act (RA 10173) & PostgreSQL RLS Active:</strong> Logged in as <strong>{currentUser.name}</strong>. Sister business records are strictly hidden at the database layer.
+              </div>
+            )}
+
+            {activeTab === 'dashboard' && (
+              <div className="space-y-6">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                  <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                    <p className="text-xs font-semibold text-slate-500">CONSOLIDATED REVENUE</p>
+                    <p className="mt-2 text-2xl font-bold text-slate-900">₱{metrics.income.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+                    <p className="mt-1 text-xs text-emerald-600">Owner-verified inflows</p>
+                  </div>
+                  <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                    <p className="text-xs font-semibold text-slate-500">APPROVED DISBURSEMENTS</p>
+                    <p className="mt-2 text-2xl font-bold text-slate-900">₱{metrics.expense.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+                    <p className="mt-1 text-xs text-slate-500">Operational & capital outflows</p>
+                  </div>
+                  <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                    <p className="text-xs font-semibold text-slate-500">NET CONSOLIDATED CASH FLOW</p>
+                    <p className="mt-2 text-2xl font-bold text-indigo-700">₱{metrics.net.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+                    <p className="mt-1 text-xs text-slate-500">Real-time cross-venture liquidity</p>
+                  </div>
+                  <div className="rounded-2xl border border-amber-200 bg-amber-50/70 p-5 shadow-sm">
+                    <p className="text-xs font-semibold text-amber-800">OWNER GATE QUEUE</p>
+                    <p className="mt-2 text-2xl font-bold text-amber-950">{pendingApprovals.length} Pending</p>
+                    <p className="mt-1 text-xs text-amber-800">Items &gt; ₱30,000 or Jewelry write-offs</p>
+                  </div>
+                </div>
+
+                {currentUser.role === 'owner' && (
+                  <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                    <div className="flex items-center justify-between mb-4">
+                      <div>
+                        <h2 className="text-base font-bold text-slate-900">Cross-Business Performance Comparison</h2>
+                        <p className="text-xs text-slate-500">Real-time segregated entity metrics aggregated for Ma'am Jasmin Taurak</p>
+                      </div>
+                      <button onClick={exportCsv} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">⬇ Export BIR CAS CSV</button>
+                    </div>
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                      {metrics.byBusiness.map((b) => (
+                        <div key={b.id} className="rounded-xl border border-slate-200 bg-slate-50/70 p-4 space-y-3">
+                          <div className="flex items-center justify-between">
+                            <span className="rounded bg-slate-900 px-2 py-0.5 text-[10px] font-bold text-white">{b.code}</span>
+                            <span className="text-xs text-slate-500">{b.count} cleared entries</span>
+                          </div>
+                          <div>
+                            <h3 className="font-bold text-sm text-slate-900">{b.name}</h3>
+                            <p className="text-xs text-slate-500">{b.description}</p>
+                          </div>
+                          <div className="space-y-1 border-t border-slate-200 pt-2 text-xs">
+                            <div className="flex justify-between"><span>Revenue:</span><span className="font-semibold text-emerald-700">₱{b.revenue.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</span></div>
+                            <div className="flex justify-between"><span>Expenses:</span><span className="font-semibold text-rose-700">₱{b.expenses.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</span></div>
+                            <div className="flex justify-between border-t border-slate-200 pt-1 font-bold"><span>Net Position:</span><span>₱{b.net.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</span></div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {currentUser.role === 'owner' && pendingApprovals.length > 0 && (
+                  <div className="rounded-2xl border border-amber-200 bg-white p-6 shadow-sm space-y-3">
+                    <h2 className="text-base font-bold text-slate-900">Owner Gate Checkpoints Requiring Authorization</h2>
+                    {pendingApprovals.map((tx) => (
+                      <div key={tx.id} className="flex flex-col justify-between gap-4 rounded-xl border border-amber-200 bg-amber-50/40 p-4 sm:flex-row sm:items-center">
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <span className="rounded bg-slate-900 px-2 py-0.5 text-[10px] font-bold text-white">{tx.referenceNo}</span>
+                            <span className="text-xs font-bold text-amber-800">{tx.gateReason}</span>
+                          </div>
+                          <p className="text-sm font-semibold text-slate-900">{tx.counterpartyName} — {tx.description}</p>
+                          <p className="text-xs text-slate-500">Submitted by {tx.submittedBy} • Receipt: {tx.receiptFilename}</p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-base font-bold mr-2">₱{tx.amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</span>
+                          <button onClick={() => handleGateDecision(tx, 'APPROVED')} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white">Approve</button>
+                          <button onClick={() => handleGateDecision(tx, 'REJECTED')} className="rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white">Reject</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {activeTab === 'approvals' && currentUser.role === 'owner' && (
+              <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm space-y-3">
+                <h2 className="text-base font-bold text-slate-900">Owner Approval Gate Queue</h2>
+                {pendingApprovals.length === 0 ? (
+                  <p className="text-sm text-slate-500 py-6 text-center">No pending items in the Owner Gate queue.</p>
+                ) : (
+                  pendingApprovals.map((tx) => (
+                    <div key={tx.id} className="flex flex-col justify-between gap-4 rounded-xl border border-slate-200 p-4 sm:flex-row sm:items-center">
+                      <div>
+                        <span className="font-mono text-xs font-bold text-indigo-700">{tx.referenceNo}</span>
+                        <p className="text-sm font-bold text-slate-900">{tx.description}</p>
+                        <p className="text-xs text-amber-800 font-semibold">{tx.gateReason}</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold mr-2">₱{tx.amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</span>
+                        <button onClick={() => handleGateDecision(tx, 'APPROVED')} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white">Approve</button>
+                        <button onClick={() => handleGateDecision(tx, 'REJECTED')} className="rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white">Reject</button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+
+            {activeTab === 'ledger' && (
+              <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+                <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
+                  <h2 className="text-base font-bold text-slate-900">Unified Financial Transaction Ledger ({visibleTransactions.length})</h2>
+                  <button onClick={exportCsv} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">⬇ Export BIR CAS CSV</button>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="border-b border-slate-200 bg-slate-50 text-slate-600 uppercase">
+                      <tr>
+                        <th className="px-4 py-3">Ref No.</th>
+                        <th className="px-4 py-3">Venture</th>
+                        <th className="px-4 py-3">Date</th>
+                        <th className="px-4 py-3">Counterparty & Particulars</th>
+                        <th className="px-4 py-3 text-right">Amount (PHP)</th>
+                        <th className="px-4 py-3">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200">
+                      {visibleTransactions.map((tx) => (
+                        <tr key={tx.id}>
+                          <td className="px-4 py-3 font-mono font-semibold">{tx.referenceNo}</td>
+                          <td className="px-4 py-3"><span className="rounded bg-slate-100 px-2 py-0.5 font-semibold">{BUSINESS_UNITS.find((b) => b.id === tx.businessId)?.code}</span></td>
+                          <td className="px-4 py-3 text-slate-600">{tx.txDate}</td>
+                          <td className="px-4 py-3"><p className="font-semibold">{tx.counterpartyName}</p><p className="text-slate-500">{tx.description}</p></td>
+                          <td className={`px-4 py-3 text-right font-bold ${tx.txType === 'INCOME' ? 'text-emerald-700' : 'text-slate-900'}`}>{tx.txType === 'INCOME' ? '+' : '-'}₱{tx.amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
+                          <td className="px-4 py-3">
+                            <span className={`rounded-full px-2.5 py-0.5 font-semibold ${tx.status === 'APPROVED' ? 'bg-emerald-100 text-emerald-800' : tx.status === 'PENDING_APPROVAL' ? 'bg-amber-100 text-amber-800' : 'bg-rose-100 text-rose-800'}`}>
+                              {tx.status}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'audit' && (
+              <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+                <div className="border-b border-slate-200 px-6 py-4">
+                  <h2 className="text-base font-bold text-slate-900">Immutable Chronological System Audit Trail (BIR RMO 1-2020)</h2>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="border-b border-slate-200 bg-slate-50 text-slate-600 uppercase">
+                      <tr>
+                        <th className="px-4 py-3">ID</th>
+                        <th className="px-4 py-3">Timestamp</th>
+                        <th className="px-4 py-3">Ref No.</th>
+                        <th className="px-4 py-3">Action</th>
+                        <th className="px-4 py-3">Actor</th>
+                        <th className="px-4 py-3">Transition</th>
+                        <th className="px-4 py-3">Remarks</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200">
+                      {visibleLogs.map((l) => (
+                        <tr key={l.id}>
+                          <td className="px-4 py-3 font-mono text-slate-500">#{l.id}</td>
+                          <td className="px-4 py-3 font-mono text-slate-600">{l.recordedAt}</td>
+                          <td className="px-4 py-3 font-mono font-semibold">{l.referenceNo}</td>
+                          <td className="px-4 py-3"><span className="rounded bg-indigo-50 px-2 py-0.5 font-bold text-indigo-700">{l.action}</span></td>
+                          <td className="px-4 py-3 font-medium">{l.actorName}</td>
+                          <td className="px-4 py-3 font-mono text-[11px]">{l.transition}</td>
+                          <td className="px-4 py-3 text-slate-600">{l.remarks}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </main>
+
+          {showModal && <SixStepModal currentUser={currentUser} onClose={() => setShowModal(false)} onSubmit={handleNewTx} />}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
