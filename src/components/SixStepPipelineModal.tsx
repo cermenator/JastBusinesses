@@ -15,7 +15,7 @@ import { BUSINESS_UNITS } from '../lib/seedData';
 interface Props {
   currentUser: UserAccount;
   onClose: () => void;
-  onSubmitTransaction: (tx: Omit<TransactionRecord, 'id' | 'createdAt'>) => void;
+  onSubmitTransaction: (tx: Omit<TransactionRecord, 'id' | 'createdAt'>) => Promise<boolean>;
 }
 
 const STEPS = [
@@ -40,11 +40,13 @@ export const SixStepPipelineModal: React.FC<Props> = ({
   const [counterpartyName, setCounterpartyName] = useState('');
   const [counterpartyTin, setCounterpartyTin] = useState('');
   const [amount, setAmount] = useState('');
-  const [txDate, setTxDate] = useState('2026-11-21');
+  const [txDate, setTxDate] = useState(new Date().toISOString().slice(0, 10));
   const [receiptFilename, setReceiptFilename] = useState('');
   const [category, setCategory] = useState('Operational Revenue');
   const [description, setDescription] = useState('');
   const [reconciled, setReconciled] = useState(true);
+  const [submissionError, setSubmissionError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
   const numericAmount = parseFloat(amount) || 0;
   const vatAmount = Number(((numericAmount / 1.12) * 0.12).toFixed(2));
@@ -66,7 +68,7 @@ export const SixStepPipelineModal: React.FC<Props> = ({
       ? 'Jewelry vault inventory write-off requires Owner authorization'
       : 'Auto-cleared within branch operational limit';
 
-  const generatedRef = `${unit.code}-2026-${Math.floor(1000 + Math.random() * 9000)}`;
+  const generatedRef = `${unit.code}-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -75,8 +77,10 @@ export const SixStepPipelineModal: React.FC<Props> = ({
     }
   };
 
-  const handleFinalSubmit = () => {
-    onSubmitTransaction({
+  const handleFinalSubmit = async () => {
+    setSubmitting(true);
+    setSubmissionError('');
+    const saved = await onSubmitTransaction({
       referenceNo: generatedRef,
       businessId,
       txType,
@@ -94,7 +98,9 @@ export const SixStepPipelineModal: React.FC<Props> = ({
       approvedBy: triggersGate ? undefined : 'System Auto-Gate',
       txDate,
     });
-    onClose();
+    setSubmitting(false);
+    if (saved) onClose();
+    else setSubmissionError('The transaction was not saved to Supabase. Resolve the ledger error and try again.');
   };
 
   return (
@@ -135,6 +141,7 @@ export const SixStepPipelineModal: React.FC<Props> = ({
 
         {/* Step Body */}
         <div className="p-6 space-y-4 min-h-[280px]">
+          {submissionError && <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">{submissionError}</p>}
           {step === 1 && (
             <div className="space-y-4">
               <h3 className="font-semibold text-slate-800">Step 1: Record Core Transaction Details</h3>
@@ -372,9 +379,10 @@ export const SixStepPipelineModal: React.FC<Props> = ({
             <button
               type="button"
               onClick={handleFinalSubmit}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-5 py-2 text-sm font-semibold text-white hover:bg-emerald-700"
+              disabled={submitting}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-5 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-wait disabled:opacity-60"
             >
-              <Receipt className="h-4 w-4" /> Submit & Log to Ledger
+              <Receipt className="h-4 w-4" /> {submitting ? 'Saving to Supabase...' : 'Submit & Log to Ledger'}
             </button>
           )}
         </div>

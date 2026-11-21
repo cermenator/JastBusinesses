@@ -46,126 +46,6 @@
       { id: 'usr-jw', name: 'Clarissa Lim', title: 'Vault Bookkeeper — Jewelry', role: 'bookkeeper', businessId: 'jewelry' },
     ];
 
-    const INITIAL_TRANSACTIONS = [
-      {
-        id: 'tx-1001',
-        referenceNo: 'JAST-RE-2026-0041',
-        businessId: 'real_estate',
-        txType: 'INCOME',
-        category: 'Property Reservation & Downpayment',
-        counterpartyTin: '245-889-120-000',
-        counterpartyName: 'Engr. Roberto Villanueva',
-        description: 'Phase 2 Corner Lot Reservation & Initial Equity Payment',
-        amount: 185000,
-        vatAmount: 19821.43,
-        receiptFilename: 'OR_8841_Villanueva_Lot12.pdf',
-        reconciled: true,
-        status: 'APPROVED',
-        gateReason: 'Verified & signed off by Owner',
-        submittedBy: 'Elena Reyes',
-        txDate: '2026-11-18',
-      },
-      {
-        id: 'tx-1002',
-        referenceNo: 'JAST-RE-2026-0042',
-        businessId: 'real_estate',
-        txType: 'EXPENSE',
-        category: 'Site Development & Surveying',
-        counterpartyTin: '412-009-331-000',
-        counterpartyName: 'Agusan Geodetic & Engineering Services',
-        description: 'Subdivision perimeter drainage & geodetic monumentation',
-        amount: 48500,
-        vatAmount: 5196.43,
-        receiptFilename: 'SI_2026_AgusanGeodetic.pdf',
-        reconciled: false,
-        status: 'PENDING_APPROVAL',
-        gateReason: 'Exceeds ₱30,000.00 automated threshold',
-        submittedBy: 'Elena Reyes',
-        txDate: '2026-11-21',
-      },
-      {
-        id: 'tx-1003',
-        referenceNo: 'JAST-PB-2026-0318',
-        businessId: 'pickleball',
-        txType: 'INCOME',
-        category: 'Court Rental & Open Play',
-        counterpartyTin: '000-000-000-000',
-        counterpartyName: 'Walk-in & App Court Bookings (Batch #18)',
-        description: 'Courts 1-4 Peak & Off-Peak Daily Rental Settlement',
-        amount: 14800,
-        vatAmount: 1585.71,
-        receiptFilename: 'POS_ZRead_Nov20.pdf',
-        reconciled: true,
-        status: 'APPROVED',
-        gateReason: 'Auto-cleared within branch operational limit',
-        submittedBy: 'Marco Santos',
-        txDate: '2026-11-20',
-      },
-      {
-        id: 'tx-1004',
-        referenceNo: 'JAST-PB-2026-0319',
-        businessId: 'pickleball',
-        txType: 'EXPENSE',
-        category: 'Court Acrylic Resurfacing & Nets',
-        counterpartyTin: '318-774-901-000',
-        counterpartyName: 'Mindanao Sports Surfaces Inc.',
-        description: 'Tournament-grade non-slip acrylic topcoat & net posts for Court 2',
-        amount: 36000,
-        vatAmount: 3857.14,
-        receiptFilename: 'INV_9920_SportsSurfaces.jpg',
-        reconciled: false,
-        status: 'PENDING_APPROVAL',
-        gateReason: 'Exceeds ₱30,000.00 automated threshold',
-        submittedBy: 'Marco Santos',
-        txDate: '2026-11-21',
-      },
-      {
-        id: 'tx-1005',
-        referenceNo: 'JAST-JW-2026-0112',
-        businessId: 'jewelry',
-        txType: 'INCOME',
-        category: 'Bespoke Diamond & Gold Sales',
-        counterpartyTin: '198-552-740-000',
-        counterpartyName: 'Dr. Katrina Mercado',
-        description: '18K White Gold Solitaire Engagement Ring (1.2ct GIA)',
-        amount: 142000,
-        vatAmount: 15214.29,
-        receiptFilename: 'SI_JW_0112_Mercado.pdf',
-        reconciled: true,
-        status: 'APPROVED',
-        gateReason: 'Verified & signed off by Owner',
-        submittedBy: 'Clarissa Lim',
-        txDate: '2026-11-19',
-      },
-      {
-        id: 'tx-1006',
-        referenceNo: 'JAST-JW-2026-0113',
-        businessId: 'jewelry',
-        txType: 'INVENTORY_WRITEOFF',
-        category: 'Vault Smelting / Stone Recalibration',
-        counterpartyTin: '000-000-000-000',
-        counterpartyName: 'Internal Vault Audit Adjustment',
-        description: '14K Clasp repair & gold weight variance write-off (2.4g)',
-        amount: 9500,
-        vatAmount: 0,
-        receiptFilename: 'Vault_Memo_113.pdf',
-        reconciled: false,
-        status: 'PENDING_APPROVAL',
-        gateReason: 'Jewelry vault inventory write-off requires Owner authorization',
-        submittedBy: 'Clarissa Lim',
-        txDate: '2026-11-21',
-      },
-    ];
-
-    const INITIAL_AUDIT_LOGS = [
-      { id: 1, referenceNo: 'JAST-RE-2026-0041', businessId: 'real_estate', action: 'INSERT', actorName: 'Elena Reyes', transition: 'NEW → PENDING_APPROVAL', remarks: 'Exceeds ₱30,000.00 automated threshold', recordedAt: '2026-11-18 09:15:02' },
-      { id: 2, referenceNo: 'JAST-RE-2026-0041', businessId: 'real_estate', action: 'APPROVE', actorName: "Ma'am Jasmin Taurak", transition: 'PENDING_APPROVAL → APPROVED', remarks: 'Owner Gate cleared after OR verification', recordedAt: '2026-11-18 10:04:19' },
-      { id: 3, referenceNo: 'JAST-RE-2026-0042', businessId: 'real_estate', action: 'INSERT', actorName: 'Elena Reyes', transition: 'NEW → PENDING_APPROVAL', remarks: 'Exceeds ₱30,000.00 automated threshold', recordedAt: '2026-11-21 10:05:11' },
-      { id: 4, referenceNo: 'JAST-PB-2026-0318', businessId: 'pickleball', action: 'INSERT', actorName: 'Marco Santos', transition: 'NEW → APPROVED', remarks: 'Auto-cleared within branch operational limit', recordedAt: '2026-11-20 21:10:05' },
-      { id: 5, referenceNo: 'JAST-PB-2026-0319', businessId: 'pickleball', action: 'INSERT', actorName: 'Marco Santos', transition: 'NEW → PENDING_APPROVAL', remarks: 'Exceeds ₱30,000.00 automated threshold', recordedAt: '2026-11-21 11:42:33' },
-      { id: 6, referenceNo: 'JAST-JW-2026-0113', businessId: 'jewelry', action: 'INSERT', actorName: 'Clarissa Lim', transition: 'NEW → PENDING_APPROVAL', remarks: 'Jewelry vault inventory write-off requires Owner authorization', recordedAt: '2026-11-21 13:15:47' },
-    ];
-
     function SixStepModal({ currentUser, onClose, onSubmit }) {
       const [step, setStep] = useState(1);
       const [businessId, setBusinessId] = useState(currentUser.businessId || 'real_estate');
@@ -364,8 +244,8 @@
       const [currentUser, setCurrentUser] = useState(DEMO_USERS[0]);
       const [businessFilter, setBusinessFilter] = useState('ALL');
       const [activeTab, setActiveTab] = useState('dashboard');
-      const [transactions, setTransactions] = useState(INITIAL_TRANSACTIONS);
-      const [auditLogs, setAuditLogs] = useState(INITIAL_AUDIT_LOGS);
+      const [transactions, setTransactions] = useState([]);
+      const [auditLogs, setAuditLogs] = useState([]);
       const [showModal, setShowModal] = useState(false);
 
       const visibleTransactions = useMemo(() => {

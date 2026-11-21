@@ -17,13 +17,17 @@ Full-stack prototype and production blueprint for **Development of an Integrated
 
 The React app includes an Operations view for:
 
-- Ma'am Jasmin Taurak to add property addresses and monthly rents, jewelry inventory with multiple photos, unit costs, selling prices and stock counts, and pickleball courts.
+- Ma'am Jasmin Taurak to add and edit property addresses and monthly rents, jewelry inventory with multiple photos, unit costs, selling prices and stock counts, and pickleball courts.
 - Staff to record property lease bookings with date-overlap checks, court bookings with time-conflict checks, and jewelry sales that reduce on-hand stock and add income to the transaction ledger.
-- A demo **JAST Sales & Booking Staff** account scoped to real estate, pickleball, and jewelry.
+- A Supabase-authenticated staff account can be assigned access to real estate, pickleball, and jewelry.
 
-In the local prototype, catalog data and compressed jewelry photos are saved in that browser's local storage. The standalone HTML preview remains a static preview of the original dashboard; use the React app for the Operations view.
+The app does not seed sample business records; it displays the data available to the authenticated user in Supabase. The React app signs users in through Supabase Auth and uses each authenticated user's `user_profiles` role and business access; it does not use a client-side role switcher.
 
-For authenticated Supabase use, apply `supabase/schema.sql`, invite the staff member through Supabase Auth, create their `user_profiles` row with role `staff`, and grant `real_estate`, `pickleball`, and `jewelry` in `user_business_access`. The account that creates the owner profile must use the exact full name `Ma'am Jasmin Taurak`; database policies allow only that owner to modify catalogs or upload jewelry photos. Supabase storage uses a private `jewelry-images` bucket.
+Catalog records, compressed property and jewelry photos, bookings, jewelry sales, transactions, and audit history are stored in Supabase. Photo files use the private `property-images` and `jewelry-images` Storage buckets. The standalone HTML preview remains a static preview of the original dashboard; use the React app for Supabase-backed operations.
+
+Apply `supabase/schema.sql` in the configured Supabase project's SQL Editor. In Supabase Auth, invite/create each user, then add a matching `user_profiles` row using the Auth user's UUID and email. Add staff access rows for `real_estate`, `pickleball`, and `jewelry` in `user_business_access`. The owner profile must have the exact full name `Ma'am Jasmin Taurak`; database policies allow only that owner to modify catalogs or upload catalog photos. Users sign in with their Supabase email and password.
+
+The app reads `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` from `.env`. Restart the Vite server after changing these values. The anon key is intended for browser use; never put a Supabase service-role key in a `VITE_` variable. Older browser-local records are not imported automatically; the Jasmin owner can use the dashboard's **Import saved browser data** action to copy this browser's saved catalogs, photos, bookings, sales, and transactions into Supabase. The local copy is preserved. Historical browser audit rows are not imported because the Supabase audit table is append-only; Supabase records the import actions as new audit events.
 
 ## How to Run Locally (Full React + Vite Project)
 

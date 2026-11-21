@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Building2,
   ShieldCheck,
@@ -14,7 +14,9 @@ import {
   History,
   Download,
   PackageOpen,
+  LogOut,
 } from 'lucide-react';
+import { Session } from '@supabase/supabase-js';
 import {
   AuditLogEntry,
   BusinessId,
@@ -24,21 +26,184 @@ import {
 import {
   BUSINESS_UNITS,
   DEMO_USERS,
-  INITIAL_AUDIT_LOGS,
-  INITIAL_TRANSACTIONS,
 } from './lib/seedData';
 import { SixStepPipelineModal } from './components/SixStepPipelineModal';
 import { OperationsDashboard } from './components/OperationsDashboard';
+import { SupabaseLogin } from './components/SupabaseLogin';
+import { LegacyDataImport } from './components/LegacyDataImport';
+import { isSupabaseConfigured, supabase } from './lib/supabaseClient';
 
 export default function App() {
+  const [session, setSession] = useState<Session | null>(null);
+  const [authReady, setAuthReady] = useState(false);
+  const [accountError, setAccountError] = useState('');
+  const [accountLoading, setAccountLoading] = useState(false);
   const [currentUser, setCurrentUser] = useState<UserAccount>(DEMO_USERS[0]);
   const [selectedBusinessFilter, setSelectedBusinessFilter] = useState<BusinessId | 'ALL'>('ALL');
   const [activeTab, setActiveTab] = useState<'dashboard' | 'approvals' | 'ledger' | 'audit' | 'operations'>('dashboard');
-  const [transactions, setTransactions] = useState<TransactionRecord[]>(INITIAL_TRANSACTIONS);
-  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>(INITIAL_AUDIT_LOGS);
+  const [transactions, setTransactions] = useState<TransactionRecord[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
+  const [persistenceError, setPersistenceError] = useState('');
+  const [ledgerLoading, setLedgerLoading] = useState(false);
   const [showPipelineModal, setShowPipelineModal] = useState(false);
+  const [operationsRefreshKey, setOperationsRefreshKey] = useState(0);
 
-  // Enforce PostgreSQL Row-Level Security (RLS) simulation in UI
+  useEffect(() => {
+    if (!supabase) {
+      setAuthReady(true);
+      return;
+    }
+
+    let active = true;
+    void supabase.auth.getSession()
+      .then(({ data, error }) => {
+        if (!active) return;
+        if (error) setAccountError(`Could not restore Supabase session: ${error.message}`);
+        setSession(data.session);
+        setAccountLoading(Boolean(data.session));
+        setAuthReady(true);
+      })
+      .catch((error: unknown) => {
+        if (!active) return;
+        setAccountError(`Could not restore Supabase session: ${error instanceof Error ? error.message : 'Supabase could not be reached.'}`);
+        setAuthReady(true);
+      });
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession);
+      setAccountLoading(Boolean(nextSession));
+      setAuthReady(true);
+      setAccountError('');
+    });
+
+    return () => {
+      active = false;
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!session || !supabase) {
+      setCurrentUser(DEMO_USERS[0]);
+      setAccountLoading(false);
+      return;
+    }
+
+    let active = true;
+    setAccountLoading(true);
+    setAccountError('');
+    void (async () => {
+      const { data: profile, error: profileError } = await supabase
+        .from('user_profiles')
+        .select('full_name, role, business_id')
+        .eq('id', session.user.id)
+        .single();
+      if (profileError) throw new Error(`Could not load your user profile: ${profileError.message}`);
+
+      const { data: accessRows, error: accessError } = await supabase
+        .from('user_business_access')
+        .select('business_id')
+        .eq('user_id', session.user.id);
+      if (accessError) throw new Error(`Could not load your business access: ${accessError.message}`);
+
+      const roles: UserAccount['role'][] = ['owner', 'branch_manager', 'bookkeeper', 'staff'];
+      if (!roles.includes(profile.role as UserAccount['role'])) {
+        throw new Error('Your Supabase profile has an unsupported role.');
+      }
+
+      const businessIds = accessRows
+        .map((row) => row.business_id)
+        .filter((id): id is BusinessId => id === 'real_estate' || id === 'pickleball' || id === 'jewelry');
+      if (profile.business_id && !businessIds.includes(profile.business_id as BusinessId)) {
+        businessIds.push(profile.business_id as BusinessId);
+      }
+
+      if (!active) return;
+      setCurrentUser({
+        id: session.user.id,
+        name: profile.full_name,
+        title: profile.role === 'owner' ? 'Managing Owner' : `${profile.role.replace('_', ' ')} — JAST Ventures`,
+        role: profile.role as UserAccount['role'],
+        businessId: (profile.business_id as BusinessId | null) || null,
+        businessIds: profile.role === 'owner' ? undefined : businessIds,
+      });
+      setSelectedBusinessFilter((profile.business_id as BusinessId | null) || 'ALL');
+    })()
+      .catch((error: unknown) => {
+        if (active) setAccountError(error instanceof Error ? error.message : 'Could not load your Supabase profile.');
+      })
+      .finally(() => {
+        if (active) setAccountLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [session]);
+
+  const loadLedger = async (): Promise<boolean> => {
+    if (!supabase || !session) return false;
+    setLedgerLoading(true);
+    try {
+      const [transactionResult, auditResult] = await Promise.all([
+        supabase.from('transactions').select('*').order('created_at', { ascending: false }),
+        supabase.from('audit_logs').select('*').order('recorded_at', { ascending: false }),
+      ]);
+      if (transactionResult.error) throw new Error(`Could not load transactions: ${transactionResult.error.message}`);
+      if (auditResult.error) throw new Error(`Could not load audit history: ${auditResult.error.message}`);
+
+      setTransactions(transactionResult.data.map((row) => ({
+        id: row.id,
+        referenceNo: row.reference_no,
+        businessId: row.business_id as BusinessId,
+        txType: row.tx_type as TransactionRecord['txType'],
+        category: row.category,
+        counterpartyTin: row.counterparty_tin || undefined,
+        counterpartyName: row.counterparty_name,
+        description: row.description,
+        amount: Number(row.amount),
+        vatAmount: Number(row.vat_amount),
+        receiptFilename: row.receipt_filename || undefined,
+        receiptDataUrl: row.receipt_url || undefined,
+        reconciled: row.reconciled,
+        status: row.status as TransactionRecord['status'],
+        gateReason: row.gate_reason || '',
+        submittedBy: row.submitted_by_name,
+        approvedBy: row.approved_by || undefined,
+        txDate: row.tx_date,
+        createdAt: row.created_at,
+      })));
+      setAuditLogs(auditResult.data.map((row) => ({
+        id: Number(row.id),
+        transactionId: row.transaction_id,
+        referenceNo: row.reference_no,
+        businessId: row.business_id as BusinessId,
+        action: row.action as AuditLogEntry['action'],
+        actorName: row.actor_name,
+        oldStatus: (row.old_status as AuditLogEntry['oldStatus']) || null,
+        newStatus: (row.new_status as AuditLogEntry['newStatus']) || 'APPROVED',
+        amount: Number(row.new_amount ?? row.old_amount ?? 0),
+        remarks: row.remarks || '',
+        recordedAt: row.recorded_at,
+      })));
+      setPersistenceError('');
+      return true;
+    } catch (error) {
+      setPersistenceError(error instanceof Error ? error.message : 'Could not load Supabase ledger data.');
+      return false;
+    } finally {
+      setLedgerLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (session) void loadLedger();
+    else {
+      setTransactions([]);
+      setAuditLogs([]);
+    }
+  }, [session?.user.id]);
+
+  // Mirror the database's RLS scope when rendering Supabase-authorized records.
   const rlsVisibleTransactions = useMemo(() => {
     if (currentUser.role === 'owner') {
       if (selectedBusinessFilter === 'ALL') return transactions;
@@ -90,77 +255,61 @@ export default function App() {
     return { totalIncome, totalExpense, netCashFlow, totalVat, byBusiness };
   }, [rlsVisibleTransactions]);
 
-  const handleRoleSwitch = (userId: string) => {
-    const found = DEMO_USERS.find((u) => u.id === userId)!;
-    setCurrentUser(found);
-    setSelectedBusinessFilter(found.businessId || 'ALL');
-    if (found.role !== 'owner' && activeTab === 'approvals') {
-      setActiveTab('ledger');
+  const handleAddTransaction = async (
+    newTx: Omit<TransactionRecord, 'id' | 'createdAt'>
+  ): Promise<boolean> => {
+    if (!supabase || !session) {
+      setPersistenceError('You must be signed in to save transactions to Supabase.');
+      return false;
     }
+    try {
+      const { error } = await supabase.from('transactions').insert({
+        reference_no: newTx.referenceNo,
+        business_id: newTx.businessId,
+        tx_type: newTx.txType,
+        category: newTx.category,
+        counterparty_tin: newTx.counterpartyTin || null,
+        counterparty_name: newTx.counterpartyName,
+        description: newTx.description,
+        amount: newTx.amount,
+        vat_amount: newTx.vatAmount,
+        receipt_url: newTx.receiptDataUrl || null,
+        receipt_filename: newTx.receiptFilename || null,
+        reconciled: newTx.reconciled,
+        status: newTx.status,
+        gate_reason: newTx.gateReason,
+        submitted_by: session.user.id,
+        submitted_by_name: currentUser.name,
+        tx_date: newTx.txDate,
+      });
+      if (error) throw new Error(error.message);
+    } catch (error) {
+      setPersistenceError(`Could not save transaction to Supabase: ${error instanceof Error ? error.message : 'Supabase could not be reached.'}`);
+      return false;
+    }
+    return loadLedger();
   };
 
-  const handleAddTransaction = (newTx: Omit<TransactionRecord, 'id' | 'createdAt'>) => {
-    const id = `tx-${Date.now()}`;
-    const created: TransactionRecord = {
-      ...newTx,
-      id,
-      createdAt: new Date().toISOString(),
-    };
-    setTransactions((prev) => [created, ...prev]);
-    setAuditLogs((prev) => [
-      {
-        id: prev.length + 1,
-        transactionId: id,
-        referenceNo: created.referenceNo,
-        businessId: created.businessId,
-        action: 'INSERT',
-        actorName: currentUser.name,
-        oldStatus: null,
-        newStatus: created.status,
-        amount: created.amount,
-        remarks: created.gateReason,
-        recordedAt: new Date().toISOString().replace('T', ' ').slice(0, 19),
-      },
-      ...prev,
-    ]);
+  const handleOwnerDecision = async (tx: TransactionRecord, decision: 'APPROVED' | 'REJECTED') => {
+    if (currentUser.role !== 'owner' || !supabase) return;
+    try {
+      const { error } = await supabase.from('transactions').update({
+        status: decision,
+        approved_by: session?.user.id,
+        approved_at: new Date().toISOString(),
+      }).eq('id', tx.id);
+      if (error) throw new Error(error.message);
+    } catch (error) {
+      setPersistenceError(`Could not update transaction in Supabase: ${error instanceof Error ? error.message : 'Supabase could not be reached.'}`);
+      return;
+    }
+    await loadLedger();
   };
 
-  const handleOwnerDecision = (tx: TransactionRecord, decision: 'APPROVED' | 'REJECTED') => {
-    if (currentUser.role !== 'owner') return;
-    setTransactions((prev) =>
-      prev.map((item) =>
-        item.id === tx.id
-          ? {
-              ...item,
-              status: decision,
-              approvedBy: currentUser.name,
-              gateReason:
-                decision === 'APPROVED'
-                  ? `Authorized by ${currentUser.name}`
-                  : `Rejected at Owner Gate by ${currentUser.name}`,
-            }
-          : item
-      )
-    );
-    setAuditLogs((prev) => [
-      {
-        id: prev.length + 1,
-        transactionId: tx.id,
-        referenceNo: tx.referenceNo,
-        businessId: tx.businessId,
-        action: decision === 'APPROVED' ? 'APPROVE' : 'REJECT',
-        actorName: currentUser.name,
-        oldStatus: 'PENDING_APPROVAL',
-        newStatus: decision,
-        amount: tx.amount,
-        remarks:
-          decision === 'APPROVED'
-            ? 'Owner Gate cleared after digital receipt verification'
-            : 'Flagged & rejected during Owner review',
-        recordedAt: new Date().toISOString().replace('T', ' ').slice(0, 19),
-      },
-      ...prev,
-    ]);
+  const handleSignOut = async () => {
+    if (!supabase) return;
+    const { error } = await supabase.auth.signOut();
+    if (error) setAccountError(`Could not sign out: ${error.message}`);
   };
 
   const handleExportBirCsv = () => {
@@ -199,6 +348,31 @@ export default function App() {
     a.click();
   };
 
+  if (!isSupabaseConfigured) {
+    return <SupabaseLogin error="Supabase is not configured. Check the local .env settings and restart the app." />;
+  }
+  if (!authReady || accountLoading) {
+    return <div className="flex min-h-screen items-center justify-center bg-slate-100 text-sm font-medium text-slate-600">Connecting to Supabase...</div>;
+  }
+  if (!session) return <SupabaseLogin error={accountError} />;
+  if (accountError) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-slate-100 px-4">
+        <div className="w-full max-w-lg space-y-4 rounded-2xl border border-rose-200 bg-white p-6 shadow-xl">
+          <h1 className="text-lg font-bold text-slate-900">Account setup required</h1>
+          <p role="alert" className="text-sm text-rose-800">{accountError}</p>
+          <button
+            type="button"
+            onClick={() => { void handleSignOut(); }}
+            className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white"
+          >
+            Sign out
+          </button>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
       {/* Top Enterprise Bar */}
@@ -221,40 +395,39 @@ export default function App() {
             </div>
           </div>
 
-          {/* Role & RLS Simulator Switcher */}
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2 rounded-xl bg-slate-800 px-3 py-1.5 border border-slate-700">
+          {/* Authenticated Supabase account */}
+          <div className="flex w-full min-w-0 flex-col gap-2 sm:w-auto sm:flex-row sm:items-center sm:gap-3">
+            <div className="flex min-w-0 items-center gap-2 rounded-xl border border-slate-700 bg-slate-800 px-3 py-1.5">
               <Lock className="h-3.5 w-3.5 text-amber-400" />
-              <span className="text-xs text-slate-300">Active Role (RLS):</span>
-              <select
-                value={currentUser.id}
-                onChange={(e) => handleRoleSwitch(e.target.value)}
-                className="bg-transparent text-xs font-semibold text-white focus:outline-none"
-              >
-                {DEMO_USERS.map((u) => (
-                  <option key={u.id} value={u.id} className="bg-slate-900 text-white">
-                    {u.name} ({u.role.toUpperCase()})
-                  </option>
-                ))}
-              </select>
+              <span className="min-w-0 text-xs font-semibold text-white">{currentUser.name} ({currentUser.role.toUpperCase()})</span>
             </div>
 
-            <button
-              onClick={() => setShowPipelineModal(true)}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow hover:bg-indigo-500 transition"
-            >
-              <PlusCircle className="h-4 w-4" /> New 6-Step Entry
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setShowPipelineModal(true)}
+                className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow transition hover:bg-indigo-500"
+              >
+                <PlusCircle className="h-4 w-4" /> New 6-Step Entry
+              </button>
+              <button
+                onClick={() => { void handleSignOut(); }}
+                aria-label="Sign out"
+                title="Sign out"
+                className="inline-flex items-center justify-center rounded-xl border border-slate-700 px-3 py-2 text-slate-200 hover:bg-slate-800"
+              >
+                <LogOut className="h-4 w-4" />
+              </button>
+            </div>
           </div>
         </div>
 
         {/* Sub-Navigation & Business Tenant Filter */}
         <div className="border-t border-slate-800 bg-slate-900/95">
-          <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-2 px-4 py-2 sm:px-6">
-            <nav className="flex items-center gap-1">
+          <div className="mx-auto flex max-w-7xl flex-col gap-2 px-4 py-2 sm:px-6 lg:flex-row lg:items-center lg:justify-between">
+            <nav className="grid w-full min-w-0 grid-cols-2 gap-1 sm:flex sm:flex-wrap lg:w-auto">
               <button
                 onClick={() => setActiveTab('dashboard')}
-                className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
+                className={`min-w-0 whitespace-normal rounded-lg px-2.5 py-1.5 text-center text-xs font-medium transition sm:px-3 ${
                   activeTab === 'dashboard'
                     ? 'bg-indigo-600 text-white'
                     : 'text-slate-300 hover:bg-slate-800'
@@ -265,7 +438,7 @@ export default function App() {
               {currentUser.role === 'owner' && (
                 <button
                   onClick={() => setActiveTab('approvals')}
-                  className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition ${
+                  className={`inline-flex min-w-0 items-center justify-center gap-1.5 whitespace-normal rounded-lg px-2.5 py-1.5 text-center text-xs font-medium transition sm:px-3 ${
                     activeTab === 'approvals'
                       ? 'bg-indigo-600 text-white'
                       : 'text-slate-300 hover:bg-slate-800'
@@ -281,7 +454,7 @@ export default function App() {
               )}
               <button
                 onClick={() => setActiveTab('ledger')}
-                className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
+                className={`min-w-0 whitespace-normal rounded-lg px-2.5 py-1.5 text-center text-xs font-medium transition sm:px-3 ${
                   activeTab === 'ledger'
                     ? 'bg-indigo-600 text-white'
                     : 'text-slate-300 hover:bg-slate-800'
@@ -291,7 +464,7 @@ export default function App() {
               </button>
               <button
                 onClick={() => setActiveTab('audit')}
-                className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
+                className={`min-w-0 whitespace-normal rounded-lg px-2.5 py-1.5 text-center text-xs font-medium transition sm:px-3 ${
                   activeTab === 'audit'
                     ? 'bg-indigo-600 text-white'
                     : 'text-slate-300 hover:bg-slate-800'
@@ -301,7 +474,7 @@ export default function App() {
               </button>
               <button
                 onClick={() => setActiveTab('operations')}
-                className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition ${
+                className={`inline-flex min-w-0 items-center justify-center gap-1.5 whitespace-normal rounded-lg px-2.5 py-1.5 text-center text-xs font-medium transition sm:px-3 ${
                   activeTab === 'operations'
                     ? 'bg-indigo-600 text-white'
                     : 'text-slate-300 hover:bg-slate-800'
@@ -312,13 +485,13 @@ export default function App() {
             </nav>
 
             {/* Tenant Scope Indicator */}
-            <div className="flex items-center gap-2 text-xs">
+            <div className="flex min-w-0 flex-wrap items-center justify-end gap-2 text-xs lg:max-w-[24rem]">
               <span className="text-slate-400">Tenant Scope:</span>
               {currentUser.role === 'owner' ? (
                 <select
                   value={selectedBusinessFilter}
                   onChange={(e) => setSelectedBusinessFilter(e.target.value as BusinessId | 'ALL')}
-                  className="rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1 text-xs font-medium text-white"
+                  className="max-w-full rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1 text-xs font-medium text-white"
                 >
                   <option value="ALL">All JAST Ventures (Consolidated)</option>
                   {BUSINESS_UNITS.map((b) => (
@@ -340,6 +513,22 @@ export default function App() {
 
       {/* Main Content Container */}
       <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 space-y-6">
+        {persistenceError && (
+          <div role="alert" className="rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+            {persistenceError}
+          </div>
+        )}
+        {ledgerLoading && <p role="status" className="text-sm text-slate-500">Loading transactions and audit history from Supabase...</p>}
+        {currentUser.role === 'owner' && currentUser.name === "Ma'am Jasmin Taurak" && (
+          <LegacyDataImport
+            userId={currentUser.id}
+            userName={currentUser.name}
+            onComplete={() => {
+              void loadLedger();
+              setOperationsRefreshKey((key) => key + 1);
+            }}
+          />
+        )}
         {/* RLS Isolation Notice for Branch Staff */}
         {currentUser.role !== 'owner' && (
           <div className="flex items-center justify-between rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-xs text-indigo-950">
@@ -712,10 +901,12 @@ export default function App() {
         {activeTab === 'operations' && (
           <OperationsDashboard
             currentUser={currentUser}
-            onJewelrySale={(itemName, quantity, amount, customerName) => {
+            authUserId={session.user.id}
+            refreshKey={operationsRefreshKey}
+            onJewelrySale={async (itemName, quantity, amount, customerName) => {
               const referenceNo = `JAST-JW-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`;
               const gateRequired = amount > BUSINESS_UNITS.find((unit) => unit.id === 'jewelry')!.approvalThreshold;
-              handleAddTransaction({
+              return handleAddTransaction({
                 referenceNo,
                 businessId: 'jewelry',
                 txType: 'INCOME',
@@ -733,11 +924,11 @@ export default function App() {
                 txDate: new Date().toISOString().slice(0, 10),
               });
             }}
-            onCourtBooking={(courtName, date, amount, customerName) => {
-              if (amount <= 0) return;
+            onCourtBooking={async (courtName, date, amount, customerName) => {
+              if (amount <= 0) return true;
               const referenceNo = `JAST-PB-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`;
               const gateRequired = amount > BUSINESS_UNITS.find((unit) => unit.id === 'pickleball')!.approvalThreshold;
-              handleAddTransaction({
+              return handleAddTransaction({
                 referenceNo,
                 businessId: 'pickleball',
                 txType: 'INCOME',
@@ -755,10 +946,11 @@ export default function App() {
                 txDate: date,
               });
             }}
-            onPropertyBooking={(propertyName, address, startDate, endDate, monthlyRent, customerName) => {
+            onPropertyBooking={async (propertyName, address, startDate, endDate, monthlyRent, customerName) => {
+              if (monthlyRent <= 0) return true;
               const referenceNo = `JAST-RE-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`;
               const gateRequired = monthlyRent > BUSINESS_UNITS.find((unit) => unit.id === 'real_estate')!.approvalThreshold;
-              handleAddTransaction({
+              return handleAddTransaction({
                 referenceNo,
                 businessId: 'real_estate',
                 txType: 'INCOME',

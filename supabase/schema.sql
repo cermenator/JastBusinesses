@@ -92,6 +92,7 @@ CREATE TABLE public.properties (
     address TEXT NOT NULL,
     monthly_rent NUMERIC(14, 2) NOT NULL CHECK (monthly_rent >= 0),
     details TEXT,
+    photo_paths TEXT[] NOT NULL DEFAULT '{}',
     created_by UUID NOT NULL REFERENCES public.user_profiles(id),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -520,6 +521,44 @@ VALUES ('jewelry-images', 'jewelry-images', false, 8388608, ARRAY['image/jpeg', 
 ON CONFLICT (id) DO UPDATE
 SET file_size_limit = EXCLUDED.file_size_limit,
     allowed_mime_types = EXCLUDED.allowed_mime_types;
+
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES ('property-images', 'property-images', false, 8388608, ARRAY['image/jpeg', 'image/png', 'image/webp', 'image/gif'])
+ON CONFLICT (id) DO UPDATE
+SET file_size_limit = EXCLUDED.file_size_limit,
+allowed_mime_types = EXCLUDED.allowed_mime_types;
+
+CREATE POLICY "Real estate staff can view property photos"
+ON storage.objects FOR SELECT TO authenticated
+USING (
+bucket_id = 'property-images'
+AND public.has_business_access('real_estate')
+);
+
+CREATE POLICY "Jasmin uploads property photos"
+ON storage.objects FOR INSERT TO authenticated
+WITH CHECK (
+bucket_id = 'property-images'
+AND public.is_jasmin_owner()
+);
+
+CREATE POLICY "Jasmin updates property photos"
+ON storage.objects FOR UPDATE TO authenticated
+USING (
+bucket_id = 'property-images'
+AND public.is_jasmin_owner()
+)
+WITH CHECK (
+bucket_id = 'property-images'
+AND public.is_jasmin_owner()
+);
+
+CREATE POLICY "Jasmin deletes property photos"
+ON storage.objects FOR DELETE TO authenticated
+USING (
+bucket_id = 'property-images'
+AND public.is_jasmin_owner()
+);
 
 CREATE POLICY "Jewelry staff can view jewelry photos"
 ON storage.objects FOR SELECT TO authenticated

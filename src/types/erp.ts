@@ -51,7 +51,7 @@ export interface AuditLogEntry {
   transactionId: string;
   referenceNo: string;
   businessId: BusinessId;
-  action: 'INSERT' | 'APPROVE' | 'REJECT' | 'RECONCILE';
+  action: 'INSERT' | 'APPROVE' | 'REJECT' | 'RECONCILE' | 'UPDATE';
   actorName: string;
   oldStatus: TransactionStatus | null;
   newStatus: TransactionStatus;

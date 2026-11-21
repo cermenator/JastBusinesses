@@ -1,14 +1,19 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Building2,
   CalendarDays,
   Camera,
+  ChevronLeft,
+  ChevronRight,
+  Eye,
   MapPin,
+  Pencil,
   PlusCircle,
   ShoppingBag,
   X,
 } from 'lucide-react';
 import { UserAccount } from '../types/erp';
+import { supabase } from '../lib/supabaseClient';
 
 interface PropertyRecord {
   id: string;
@@ -16,6 +21,8 @@ interface PropertyRecord {
   address: string;
   monthlyRent: number;
   details: string;
+  photos: string[];
+  photoPaths: string[];
 }
 
 interface PropertyBookingRecord {
@@ -37,6 +44,7 @@ interface JewelryItem {
   sellingPrice: number;
   quantity: number;
   photos: string[];
+  photoPaths: string[];
 }
 
 interface CourtRecord {
@@ -78,8 +86,10 @@ interface OperationsData {
 
 interface Props {
   currentUser: UserAccount;
-  onJewelrySale: (itemName: string, quantity: number, amount: number, customerName: string) => void;
-  onCourtBooking: (courtName: string, date: string, amount: number, customerName: string) => void;
+  authUserId: string;
+  refreshKey: number;
+  onJewelrySale: (itemName: string, quantity: number, amount: number, customerName: string) => Promise<boolean>;
+  onCourtBooking: (courtName: string, date: string, amount: number, customerName: string) => Promise<boolean>;
   onPropertyBooking: (
     propertyName: string,
     address: string,
@@ -87,20 +97,15 @@ interface Props {
     endDate: string,
     monthlyRent: number,
     customerName: string
-  ) => void;
+  ) => Promise<boolean>;
 }
 
-const STORAGE_KEY = 'jast-operations-v1';
 const TODAY = new Date().toISOString().slice(0, 10);
 const EMPTY_DATA: OperationsData = {
   properties: [],
   propertyBookings: [],
   jewelry: [],
-  courts: [1, 2, 3, 4].map((number) => ({
-    id: `court-${number}`,
-    name: `Court ${number}`,
-    notes: '',
-  })),
+  courts: [],
   bookings: [],
   sales: [],
 };
@@ -108,29 +113,47 @@ const EMPTY_DATA: OperationsData = {
 const newId = () => globalThis.crypto?.randomUUID?.() || `record-${Date.now()}-${Math.random()}`;
 const money = (amount: number) => `₱${amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
 
-function readOperationsData(): { data: OperationsData; error: string } {
-  try {
-    const saved = window.localStorage.getItem(STORAGE_KEY);
-    if (!saved) return { data: EMPTY_DATA, error: '' };
-    const parsed: Partial<OperationsData> = JSON.parse(saved);
-    if (!parsed || typeof parsed !== 'object') throw new Error('Stored data is not an object.');
-    return {
-      data: {
-        properties: Array.isArray(parsed.properties) ? parsed.properties : [],
-        propertyBookings: Array.isArray(parsed.propertyBookings) ? parsed.propertyBookings : [],
-        jewelry: Array.isArray(parsed.jewelry) ? parsed.jewelry : [],
-        courts: Array.isArray(parsed.courts) ? parsed.courts : EMPTY_DATA.courts,
-        bookings: Array.isArray(parsed.bookings) ? parsed.bookings : [],
-        sales: Array.isArray(parsed.sales) ? parsed.sales : [],
-      },
-      error: '',
-    };
-  } catch (error) {
-    return {
-      data: EMPTY_DATA,
-      error: `Could not load saved operations data: ${error instanceof Error ? error.message : 'unknown error'}`,
-    };
+async function signedPhotoUrls(bucket: string, paths: string[]): Promise<string[]> {
+  if (!paths.length) return [];
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { data, error } = await supabase.storage.from(bucket).createSignedUrls(paths, 3600);
+  if (error) throw new Error(`Could not load photos from ${bucket}: ${error.message}`);
+  return data.map((item) => {
+    if (!item.signedUrl) throw new Error(`Could not create a view link for a photo in ${bucket}.`);
+    return item.signedUrl;
+  });
+}
+
+async function saveCatalogPhotos(
+  bucket: string,
+  userId: string,
+  photos: string[],
+  previousPhotos: string[] = [],
+  previousPaths: string[] = []
+): Promise<string[]> {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const paths: string[] = [];
+  for (const photo of photos) {
+    if (photo.startsWith('data:image/')) {
+      const response = await fetch(photo);
+      if (!response.ok) throw new Error('Could not prepare an uploaded catalog photo.');
+      const blob = await response.blob();
+      const path = `${userId}/${newId()}.jpg`;
+      const { error } = await supabase.storage.from(bucket).upload(path, blob, {
+        contentType: 'image/jpeg',
+        upsert: false,
+      });
+      if (error) throw new Error(`Could not upload a catalog photo: ${error.message}`);
+      paths.push(path);
+      continue;
+    }
+
+    const previousIndex = previousPhotos.indexOf(photo);
+    const existingPath = previousIndex >= 0 ? previousPaths[previousIndex] : undefined;
+    if (!existingPath) throw new Error('A retained photo could not be matched to its Supabase storage object.');
+    paths.push(existingPath);
   }
+  return paths;
 }
 
 async function compressPhoto(file: File): Promise<string> {
@@ -170,23 +193,34 @@ async function compressPhoto(file: File): Promise<string> {
 
 export const OperationsDashboard: React.FC<Props> = ({
   currentUser,
+  authUserId,
+  refreshKey,
   onJewelrySale,
   onCourtBooking,
   onPropertyBooking,
 }) => {
-  const [initial] = useState(readOperationsData);
-  const [data, setData] = useState(initial.data);
-  const [message, setMessage] = useState(initial.error);
+  const [data, setData] = useState(EMPTY_DATA);
+  const [message, setMessage] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [photoPreview, setPhotoPreview] = useState<{ itemId: string; photoIndex: number } | null>(null);
+  const [propertyPreview, setPropertyPreview] = useState<{ propertyId: string; photoIndex: number } | null>(null);
   const [activeForm, setActiveForm] = useState<'property' | 'propertyBooking' | 'jewelry' | 'court' | 'booking' | 'sale' | null>(null);
+  const [editingCatalogId, setEditingCatalogId] = useState<string | null>(null);
   const [photoError, setPhotoError] = useState('');
-  const isOwner = currentUser.role === 'owner' && currentUser.id === 'usr-owner-jasmin';
+  const isOwner = currentUser.role === 'owner' && currentUser.name === "Ma'am Jasmin Taurak";
   const allowedBusinesses = currentUser.role === 'owner'
     ? ['real_estate', 'pickleball', 'jewelry']
     : currentUser.businessIds || (currentUser.businessId ? [currentUser.businessId] : []);
   const canViewProperties = allowedBusinesses.includes('real_estate');
   const canViewCourts = allowedBusinesses.includes('pickleball');
   const canViewJewelry = allowedBusinesses.includes('jewelry');
-  const [propertyForm, setPropertyForm] = useState({ name: '', address: '', rent: '', details: '' });
+  const [propertyForm, setPropertyForm] = useState({
+    name: '',
+    address: '',
+    rent: '',
+    details: '',
+    photos: [] as string[],
+  });
   const [propertyBookingForm, setPropertyBookingForm] = useState({
     propertyId: '',
     startDate: TODAY,
@@ -213,17 +247,107 @@ export const OperationsDashboard: React.FC<Props> = ({
   });
   const [saleForm, setSaleForm] = useState({ itemId: '', quantity: '1', customerName: '' });
 
-  const save = (next: OperationsData) => {
+  const refreshData = async () => {
+    if (!supabase) {
+      setMessage('Supabase is not configured.');
+      setLoading(false);
+      return false;
+    }
+    setLoading(true);
     try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-      setData(next);
+      const [propertyResult, propertyBookingResult, jewelryResult, courtResult, bookingResult, saleResult] = await Promise.all([
+        supabase.from('properties').select('*').order('created_at', { ascending: false }),
+        supabase.from('property_bookings').select('*').order('created_at', { ascending: false }),
+        supabase.from('jewelry_inventory').select('*').order('created_at', { ascending: false }),
+        supabase.from('pickleball_courts').select('*').order('created_at', { ascending: false }),
+        supabase.from('court_bookings').select('*').order('created_at', { ascending: false }),
+        supabase.from('jewelry_sales').select('*').order('sold_at', { ascending: false }),
+      ]);
+      for (const [label, result] of [
+        ['properties', propertyResult],
+        ['property bookings', propertyBookingResult],
+        ['jewelry inventory', jewelryResult],
+        ['pickleball courts', courtResult],
+        ['court bookings', bookingResult],
+        ['jewelry sales', saleResult],
+      ] as const) {
+        if (result.error) throw new Error(`Could not load ${label} from Supabase: ${result.error.message}`);
+      }
+      if (!propertyResult.data || !propertyBookingResult.data || !jewelryResult.data ||
+        !courtResult.data || !bookingResult.data || !saleResult.data) {
+        throw new Error('Supabase returned incomplete Operations data.');
+      }
+
+      const properties = await Promise.all(propertyResult.data.map(async (row) => {
+        const photoPaths = row.photo_paths || [];
+        return {
+          id: row.id,
+          name: row.name,
+          address: row.address,
+          monthlyRent: Number(row.monthly_rent),
+          details: row.details || '',
+          photoPaths,
+          photos: await signedPhotoUrls('property-images', photoPaths),
+        };
+      }));
+      const jewelry = await Promise.all(jewelryResult.data.map(async (row) => {
+        const photoPaths = row.photo_paths || [];
+        return {
+          id: row.id,
+          sku: row.sku,
+          name: row.name,
+          description: row.description || '',
+          unitCost: Number(row.unit_cost),
+          sellingPrice: Number(row.selling_price),
+          quantity: row.quantity,
+          photoPaths,
+          photos: await signedPhotoUrls('jewelry-images', photoPaths),
+        };
+      }));
+      const courts = courtResult.data.map((row) => ({ id: row.id, name: row.name, notes: row.notes || '' }));
+      const propertyBookings = propertyBookingResult.data.map((row) => ({
+        id: row.id,
+        propertyId: row.property_id,
+        startDate: row.start_date,
+        endDate: row.end_date,
+        customerName: row.customer_name,
+        monthlyRent: Number(row.monthly_rent),
+        processedBy: row.processed_by,
+      }));
+      const bookings = bookingResult.data.map((row) => ({
+        id: row.id,
+        courtId: row.court_id,
+        date: row.booking_date,
+        startTime: row.start_time,
+        endTime: row.end_time,
+        customerName: row.customer_name,
+        amount: Number(row.amount),
+        processedBy: row.processed_by,
+      }));
+      const sales = saleResult.data.map((row) => ({
+        id: row.id,
+        itemId: row.inventory_item_id,
+        itemName: jewelry.find((item) => item.id === row.inventory_item_id)?.name || 'Jewelry item',
+        quantity: row.quantity,
+        unitPrice: Number(row.unit_price),
+        customerName: row.customer_name,
+        soldAt: row.sold_at,
+        processedBy: row.processed_by,
+      }));
+      setData({ properties, propertyBookings, jewelry, courts, bookings, sales });
       setMessage('');
       return true;
     } catch (error) {
-      setMessage(`Could not save operations data in this browser: ${error instanceof Error ? error.message : 'storage is unavailable'}`);
+      setMessage(error instanceof Error ? error.message : 'Could not load Operations data from Supabase.');
       return false;
+    } finally {
+      setLoading(false);
     }
   };
+
+  useEffect(() => {
+    void refreshData();
+  }, [authUserId, refreshKey]);
 
   const availableFor = (courtId: string, date: string, startTime: string, endTime: string) =>
     !data.bookings.some((booking) =>
@@ -253,6 +377,31 @@ export const OperationsDashboard: React.FC<Props> = ({
     0
   );
   const selectedProperty = data.properties.find((property) => property.id === propertyBookingForm.propertyId);
+  const previewItem = photoPreview
+    ? data.jewelry.find((item) => item.id === photoPreview.itemId)
+    : undefined;
+  const previewPhoto = previewItem?.photos[photoPreview?.photoIndex || 0];
+  const previewRevenue = previewItem
+    ? data.sales
+        .filter((sale) => sale.itemId === previewItem.id)
+        .reduce((total, sale) => total + sale.unitPrice * sale.quantity, 0)
+    : 0;
+  const previewProperty = propertyPreview
+    ? data.properties.find((property) => property.id === propertyPreview.propertyId)
+    : undefined;
+  const previewPropertyPhoto = previewProperty?.photos[propertyPreview?.photoIndex || 0];
+
+  useEffect(() => {
+    if (!photoPreview && !propertyPreview) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setPhotoPreview(null);
+        setPropertyPreview(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [photoPreview, propertyPreview]);
 
   const propertyAvailableFor = (propertyId: string, startDate: string, endDate: string) =>
     !data.propertyBookings.some((booking) =>
@@ -266,74 +415,111 @@ export const OperationsDashboard: React.FC<Props> = ({
     propertyAvailableFor(property.id, propertyBookingForm.startDate, propertyBookingForm.endDate)
   );
 
-  const handlePhotos = async (files: FileList | null) => {
-    if (!files?.length) return;
+  const handlePhotos = async (files: FileList | null): Promise<string[]> => {
+    if (!files?.length) return [];
     setPhotoError('');
     try {
       const photos = await Promise.all(Array.from(files).map(compressPhoto));
-      setJewelryForm((form) => ({ ...form, photos: [...form.photos, ...photos] }));
+      return photos;
     } catch (error) {
       setPhotoError(error instanceof Error ? error.message : 'Could not load the selected images.');
+      return [];
     }
   };
 
-  const addProperty = () => {
+  const addProperty = async () => {
+    if (!isOwner) {
+      setMessage('Only Ma’am Jasmin Taurak can edit the property catalog.');
+      return;
+    }
     const rent = Number(propertyForm.rent);
     if (!propertyForm.name.trim() || !propertyForm.address.trim() || !propertyForm.rent.trim() ||
       !Number.isFinite(rent) || rent < 0) {
       setMessage('Enter a property name, address, and a valid non-negative monthly rent.');
       return;
     }
-    if (save({
-      ...data,
-      properties: [{
-        id: newId(),
+    try {
+      const previous = data.properties.find((item) => item.id === editingCatalogId);
+      const photoPaths = await saveCatalogPhotos(
+        'property-images',
+        authUserId,
+        propertyForm.photos,
+        previous?.photos,
+        previous?.photoPaths
+      );
+      const property = {
         name: propertyForm.name.trim(),
         address: propertyForm.address.trim(),
-        monthlyRent: rent,
+        monthly_rent: rent,
         details: propertyForm.details.trim(),
-      }, ...data.properties],
-    })) {
-      setPropertyForm({ name: '', address: '', rent: '', details: '' });
+        photo_paths: photoPaths,
+      };
+      const result = editingCatalogId
+        ? await supabase!.from('properties').update(property).eq('id', editingCatalogId)
+        : await supabase!.from('properties').insert({ ...property, created_by: authUserId });
+      if (result.error) throw new Error(`Could not save property to Supabase: ${result.error.message}`);
+      const removedPaths = (previous?.photoPaths || []).filter((path) => !photoPaths.includes(path));
+      if (removedPaths.length) {
+        const { error } = await supabase!.storage.from('property-images').remove(removedPaths);
+        if (error) setMessage(`Property was saved, but removed photo files could not be cleaned up: ${error.message}`);
+      }
+      await refreshData();
+      setPropertyForm({ name: '', address: '', rent: '', details: '', photos: [] });
+      setEditingCatalogId(null);
       setActiveForm(null);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Could not save property to Supabase.');
     }
   };
 
-  const addPropertyBooking = () => {
-    const property = data.properties.find((item) => item.id === propertyBookingForm.propertyId);
-    if (!property || !propertyBookingForm.startDate || !propertyBookingForm.endDate ||
-      propertyBookingForm.startDate < TODAY || propertyBookingForm.endDate < propertyBookingForm.startDate) {
-      setMessage('Select a property and valid lease start and end dates (start date must be today or later).');
-      return;
-    }
-    if (!propertyAvailableFor(property.id, propertyBookingForm.startDate, propertyBookingForm.endDate)) {
-      setMessage('This property already has a booking during those dates. Choose another property or date range.');
-      return;
-    }
-    const booking: PropertyBookingRecord = {
-      id: newId(),
-      propertyId: property.id,
-      startDate: propertyBookingForm.startDate,
-      endDate: propertyBookingForm.endDate,
-      customerName: propertyBookingForm.customerName.trim() || 'Walk-in Customer',
-      monthlyRent: property.monthlyRent,
-      processedBy: currentUser.name,
-    };
-    if (save({ ...data, propertyBookings: [booking, ...data.propertyBookings] })) {
-      onPropertyBooking(
-        property.name,
-        property.address,
-        booking.startDate,
-        booking.endDate,
-        booking.monthlyRent,
-        booking.customerName
-      );
-      setPropertyBookingForm({ propertyId: '', startDate: TODAY, endDate: '', customerName: '' });
-      setActiveForm(null);
-    }
+  const editProperty = (property: PropertyRecord) => {
+    if (!isOwner) return;
+    setPropertyForm({
+      name: property.name,
+      address: property.address,
+      rent: String(property.monthlyRent),
+      details: property.details,
+      photos: [...property.photos],
+    });
+    setEditingCatalogId(property.id);
+    setPhotoError('');
+    setActiveForm('property');
   };
 
-  const addJewelry = () => {
+  const editJewelryItem = (item: JewelryItem) => {
+    if (!isOwner) return;
+    setJewelryForm({
+      sku: item.sku,
+      name: item.name,
+      description: item.description,
+      cost: String(item.unitCost),
+      price: String(item.sellingPrice),
+      quantity: String(item.quantity),
+      photos: [...item.photos],
+    });
+    setEditingCatalogId(item.id);
+    setPhotoError('');
+    setActiveForm('jewelry');
+  };
+
+  const editCourt = (court: CourtRecord) => {
+    if (!isOwner) return;
+    setCourtForm({ name: court.name, notes: court.notes });
+    setEditingCatalogId(court.id);
+    setActiveForm('court');
+  };
+
+  const cancelCatalogEdit = () => {
+    setEditingCatalogId(null);
+    setPhotoError('');
+    setActiveForm(null);
+  };
+
+  const saveJewelryItem = async () => {
+    if (!isOwner) {
+      setMessage('Only Ma’am Jasmin Taurak can edit the jewelry catalog.');
+      return;
+    }
     const unitCost = Number(jewelryForm.cost);
     const sellingPrice = Number(jewelryForm.price);
     const quantity = Number(jewelryForm.quantity);
@@ -344,47 +530,121 @@ export const OperationsDashboard: React.FC<Props> = ({
       setMessage('Enter the SKU, item name, at least one photo, valid cost and selling price, and whole-number stock.');
       return;
     }
-    if (data.jewelry.some((item) => item.sku.toLowerCase() === jewelryForm.sku.trim().toLowerCase())) {
+    if (data.jewelry.some((item) =>
+      item.id !== editingCatalogId && item.sku.toLowerCase() === jewelryForm.sku.trim().toLowerCase()
+    )) {
       setMessage('That jewelry SKU already exists. Enter a unique SKU.');
       return;
     }
-    if (save({
-      ...data,
-      jewelry: [{
-        id: newId(),
+    try {
+      const previous = data.jewelry.find((item) => item.id === editingCatalogId);
+      const photoPaths = await saveCatalogPhotos(
+        'jewelry-images',
+        authUserId,
+        jewelryForm.photos,
+        previous?.photos,
+        previous?.photoPaths
+      );
+      const item = {
         sku: jewelryForm.sku.trim(),
         name: jewelryForm.name.trim(),
         description: jewelryForm.description.trim(),
-        unitCost,
-        sellingPrice,
+        unit_cost: unitCost,
+        selling_price: sellingPrice,
         quantity,
-        photos: jewelryForm.photos,
-      }, ...data.jewelry],
-    })) {
+        photo_paths: photoPaths,
+      };
+      const result = editingCatalogId
+        ? await supabase!.from('jewelry_inventory').update(item).eq('id', editingCatalogId)
+        : await supabase!.from('jewelry_inventory').insert({ ...item, created_by: authUserId });
+      if (result.error) throw new Error(`Could not save jewelry inventory to Supabase: ${result.error.message}`);
+      const removedPaths = (previous?.photoPaths || []).filter((path) => !photoPaths.includes(path));
+      if (removedPaths.length) {
+        const { error } = await supabase!.storage.from('jewelry-images').remove(removedPaths);
+        if (error) setMessage(`Jewelry was saved, but removed photo files could not be cleaned up: ${error.message}`);
+      }
+      await refreshData();
       setJewelryForm({ sku: '', name: '', description: '', cost: '', price: '', quantity: '1', photos: [] });
+      setEditingCatalogId(null);
       setActiveForm(null);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Could not save jewelry inventory to Supabase.');
     }
   };
 
-  const addCourt = () => {
+  const saveCourt = async () => {
+    if (!isOwner) {
+      setMessage('Only Ma’am Jasmin Taurak can edit the pickleball court catalog.');
+      return;
+    }
     if (!courtForm.name.trim()) {
       setMessage('Enter a name for the pickleball court.');
       return;
     }
-    if (data.courts.some((court) => court.name.toLowerCase() === courtForm.name.trim().toLowerCase())) {
+    if (data.courts.some((court) =>
+      court.id !== editingCatalogId && court.name.toLowerCase() === courtForm.name.trim().toLowerCase()
+    )) {
       setMessage('A court with that name already exists.');
       return;
     }
-    if (save({
-      ...data,
-      courts: [{ id: newId(), name: courtForm.name.trim(), notes: courtForm.notes.trim() }, ...data.courts],
-    })) {
+    const court = { name: courtForm.name.trim(), notes: courtForm.notes.trim(), ...(editingCatalogId ? {} : { created_by: authUserId }) };
+    try {
+      const result = editingCatalogId
+        ? await supabase!.from('pickleball_courts').update(court).eq('id', editingCatalogId)
+        : await supabase!.from('pickleball_courts').insert(court);
+      if (result.error) throw new Error(result.error.message);
+    } catch (error) {
+      setMessage(`Could not save court to Supabase: ${error instanceof Error ? error.message : 'Supabase could not be reached.'}`);
+      return;
+    }
+    if (await refreshData()) {
       setCourtForm({ name: '', notes: '' });
+      setEditingCatalogId(null);
       setActiveForm(null);
     }
   };
 
-  const addBooking = () => {
+  const addPropertyBooking = async () => {
+    const property = data.properties.find((item) => item.id === propertyBookingForm.propertyId);
+    if (!property || !propertyBookingForm.startDate || !propertyBookingForm.endDate ||
+      propertyBookingForm.startDate < TODAY || propertyBookingForm.endDate < propertyBookingForm.startDate) {
+      setMessage('Select a property and valid lease start and end dates (start date must be today or later).');
+      return;
+    }
+    if (!propertyAvailableFor(property.id, propertyBookingForm.startDate, propertyBookingForm.endDate)) {
+      setMessage('This property already has a booking during those dates. Choose another property or date range.');
+      return;
+    }
+    const customerName = propertyBookingForm.customerName.trim() || 'Walk-in Customer';
+    try {
+      const { error } = await supabase!.from('property_bookings').insert({
+        property_id: property.id,
+        start_date: propertyBookingForm.startDate,
+        end_date: propertyBookingForm.endDate,
+        customer_name: customerName,
+        monthly_rent: property.monthlyRent,
+        processed_by: authUserId,
+      });
+      if (error) throw new Error(error.message);
+    } catch (error) {
+      setMessage(`Could not save property booking to Supabase: ${error instanceof Error ? error.message : 'Supabase could not be reached.'}`);
+      return;
+    }
+    const ledgerSaved = await onPropertyBooking(
+        property.name,
+        property.address,
+        propertyBookingForm.startDate,
+        propertyBookingForm.endDate,
+        property.monthlyRent,
+        customerName
+      );
+    if (!(await refreshData())) return;
+    setPropertyBookingForm({ propertyId: '', startDate: TODAY, endDate: '', customerName: '' });
+    setActiveForm(null);
+    if (!ledgerSaved) setMessage('Property booking was saved to Supabase, but its revenue entry could not be saved. Check the ledger error and retry.');
+  };
+
+  const addBooking = async () => {
     const court = data.courts.find((item) => item.id === bookingForm.courtId);
     if (!court || !bookingForm.date || bookingForm.date < TODAY ||
       !bookingForm.startTime || !bookingForm.endTime || !bookingForm.amount.trim() ||
@@ -396,56 +656,68 @@ export const OperationsDashboard: React.FC<Props> = ({
       setMessage('That court already has a booking during this time. Choose another court or time.');
       return;
     }
-    const booking: BookingRecord = {
-      id: newId(),
-      courtId: court.id,
-      date: bookingForm.date,
-      startTime: bookingForm.startTime,
-      endTime: bookingForm.endTime,
-      customerName: bookingForm.customerName.trim() || 'Walk-in Customer',
-      amount: bookingAmount,
-      processedBy: currentUser.name,
-    };
-    if (save({ ...data, bookings: [booking, ...data.bookings] })) {
-      onCourtBooking(court.name, booking.date, booking.amount, booking.customerName);
-      setBookingForm({ courtId: '', date: TODAY, startTime: '', endTime: '', customerName: '', amount: '0' });
-      setActiveForm(null);
+    const customerName = bookingForm.customerName.trim() || 'Walk-in Customer';
+    try {
+      const { error } = await supabase!.from('court_bookings').insert({
+        court_id: court.id,
+        booking_date: bookingForm.date,
+        start_time: bookingForm.startTime,
+        end_time: bookingForm.endTime,
+        customer_name: customerName,
+        amount: bookingAmount,
+        processed_by: authUserId,
+      });
+      if (error) throw new Error(error.message);
+    } catch (error) {
+      setMessage(`Could not save court booking to Supabase: ${error instanceof Error ? error.message : 'Supabase could not be reached.'}`);
+      return;
     }
+    const ledgerSaved = await onCourtBooking(court.name, bookingForm.date, bookingAmount, customerName);
+    if (!(await refreshData())) return;
+    setBookingForm({ courtId: '', date: TODAY, startTime: '', endTime: '', customerName: '', amount: '0' });
+    setActiveForm(null);
+    if (!ledgerSaved && bookingAmount > 0) setMessage('Court booking was saved to Supabase, but its revenue entry could not be saved. Check the ledger error and retry.');
   };
 
-  const processSale = () => {
+  const processSale = async () => {
     if (!selectedSaleItem || !Number.isInteger(saleQuantity) || saleQuantity < 1 ||
       saleQuantity > selectedSaleItem.quantity) {
       setMessage('Select an in-stock jewelry item and enter a valid quantity not exceeding available stock.');
       return;
     }
-    const sale: JewelrySaleRecord = {
-      id: newId(),
-      itemId: selectedSaleItem.id,
-      itemName: selectedSaleItem.name,
-      quantity: saleQuantity,
-      unitPrice: selectedSaleItem.sellingPrice,
-      customerName: saleForm.customerName.trim() || 'Walk-in Customer',
-      soldAt: new Date().toISOString(),
-      processedBy: currentUser.name,
-    };
-    const next = {
-      ...data,
-      jewelry: data.jewelry.map((item) =>
-        item.id === selectedSaleItem.id ? { ...item, quantity: item.quantity - saleQuantity } : item
-      ),
-      sales: [sale, ...data.sales],
-    };
-    if (save(next)) {
-      onJewelrySale(sale.itemName, sale.quantity, sale.unitPrice * sale.quantity, sale.customerName);
-      setSaleForm({ itemId: '', quantity: '1', customerName: '' });
-      setActiveForm(null);
+    const customerName = saleForm.customerName.trim() || 'Walk-in Customer';
+    try {
+      const { error } = await supabase!.from('jewelry_sales').insert({
+        inventory_item_id: selectedSaleItem.id,
+        quantity: saleQuantity,
+        unit_price: selectedSaleItem.sellingPrice,
+        customer_name: customerName,
+        processed_by: authUserId,
+      });
+      if (error) throw new Error(error.message);
+    } catch (error) {
+      setMessage(`Could not save jewelry sale to Supabase: ${error instanceof Error ? error.message : 'Supabase could not be reached.'}`);
+      return;
     }
+    const ledgerSaved = await onJewelrySale(
+      selectedSaleItem.name,
+      saleQuantity,
+      selectedSaleItem.sellingPrice * saleQuantity,
+      customerName
+    );
+    if (!(await refreshData())) return;
+    setSaleForm({ itemId: '', quantity: '1', customerName: '' });
+    setActiveForm(null);
+    if (!ledgerSaved) setMessage('Jewelry sale and stock update were saved to Supabase, but its revenue entry could not be saved. Check the ledger error and retry.');
   };
 
   const inputClass = 'w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm';
   const labelClass = 'mb-1 block text-xs font-semibold text-slate-600';
   const canEditCatalog = isOwner;
+
+  if (loading) {
+    return <div className="rounded-xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-600">Loading Operations data from Supabase...</div>;
+  }
 
   return (
     <div className="space-y-6">
@@ -454,7 +726,7 @@ export const OperationsDashboard: React.FC<Props> = ({
         <p className="mt-1 text-xs text-slate-500">
           Properties, court availability, jewelry stock, bookings, and sales.
           {isOwner
-            ? ' Only Ma’am Jasmin Taurak can add catalog records.'
+            ? ' Only Ma’am Jasmin Taurak can add or edit catalog records.'
             : ' Catalog records are read-only; bookings and jewelry sales are enabled for your staff account.'}
         </p>
       </div>
@@ -476,7 +748,12 @@ export const OperationsDashboard: React.FC<Props> = ({
                 <p className="text-xs text-slate-500">{data.properties.length} properties</p>
               </div>
             </div>
-            {canEditCatalog && <button onClick={() => setActiveForm(activeForm === 'property' ? null : 'property')} className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white"><PlusCircle className="h-4 w-4" /> Add property</button>}
+            {canEditCatalog && <button onClick={() => {
+              setPropertyForm({ name: '', address: '', rent: '', details: '', photos: [] });
+              setEditingCatalogId(null);
+              setPhotoError('');
+              setActiveForm(activeForm === 'property' && !editingCatalogId ? null : 'property');
+            }} className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white"><PlusCircle className="h-4 w-4" /> Add property</button>}
           </div>
           {activeForm === 'property' && canEditCatalog && (
             <div className="mb-4 grid gap-3 rounded-xl bg-slate-50 p-4 sm:grid-cols-2">
@@ -484,14 +761,79 @@ export const OperationsDashboard: React.FC<Props> = ({
               <label><span className={labelClass}>Monthly rent (PHP)</span><input type="number" min="0" className={inputClass} value={propertyForm.rent} onChange={(e) => setPropertyForm({ ...propertyForm, rent: e.target.value })} /></label>
               <label className="sm:col-span-2"><span className={labelClass}>Street address</span><input className={inputClass} value={propertyForm.address} onChange={(e) => setPropertyForm({ ...propertyForm, address: e.target.value })} /></label>
               <label className="sm:col-span-2"><span className={labelClass}>Notes (optional)</span><input className={inputClass} value={propertyForm.details} onChange={(e) => setPropertyForm({ ...propertyForm, details: e.target.value })} /></label>
-              <div className="flex gap-2 sm:col-span-2"><button onClick={addProperty} className="rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white">Save property</button><button onClick={() => setActiveForm(null)} className="rounded-lg border border-slate-300 px-4 py-2 text-xs">Cancel</button></div>
+              <div className="sm:col-span-2">
+                <label className={labelClass}>Property photos (multiple images allowed)</label>
+                <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700">
+                  <Camera className="h-4 w-4" /> Choose images
+                  <input
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    className="sr-only"
+                    onChange={(e) => {
+                      void handlePhotos(e.target.files).then((photos) => {
+                        if (photos.length) setPropertyForm((form) => ({ ...form, photos: [...form.photos, ...photos] }));
+                      });
+                      e.currentTarget.value = '';
+                    }}
+                  />
+                </label>
+                {photoError && <p role="alert" className="mt-2 text-xs text-rose-700">{photoError}</p>}
+                {propertyForm.photos.length > 0 && (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {propertyForm.photos.map((photo, index) => (
+                      <div key={`${index}-${photo.slice(0, 24)}`} className="relative">
+                        <img src={photo} alt={`Property upload ${index + 1}`} className="h-16 w-16 rounded-lg object-cover" />
+                        <button
+                          type="button"
+                          aria-label={`Remove property photo ${index + 1}`}
+                          onClick={() => setPropertyForm((form) => ({
+                            ...form,
+                            photos: form.photos.filter((_, photoIndex) => photoIndex !== index),
+                          }))}
+                          className="absolute -right-1 -top-1 rounded-full bg-slate-900 p-0.5 text-white"
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="flex gap-2 sm:col-span-2"><button onClick={addProperty} className="rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white">{editingCatalogId ? 'Save changes' : 'Save property'}</button><button onClick={cancelCatalogEdit} className="rounded-lg border border-slate-300 px-4 py-2 text-xs">Cancel</button></div>
             </div>
           )}
           {data.properties.length ? (
             <div className="grid gap-3 md:grid-cols-2">
               {data.properties.map((property) => (
-                <article key={property.id} className="rounded-xl border border-slate-200 p-4">
-                  <h4 className="font-semibold text-slate-900">{property.name}</h4>
+                <article key={property.id} className="min-w-0 rounded-xl border border-slate-200 p-4">
+                  {property.photos.length > 0 && (
+                    <div className="mb-3 flex min-w-0 gap-2 overflow-x-auto pb-1">
+                      {property.photos.map((photo, index) => (
+                        <div key={index} className={`group relative h-36 overflow-hidden rounded-lg bg-slate-100 ${property.photos.length === 1 ? 'w-full shrink-0' : 'w-36 shrink-0'}`}>
+                          <img
+                            src={photo}
+                            alt={`${property.name} ${index + 1}`}
+                            className="h-full w-full object-cover"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setPropertyPreview({ propertyId: property.id, photoIndex: index })}
+                            aria-label={`View ${property.name} details, photo ${index + 1}`}
+                            className="absolute inset-0 flex items-center justify-center bg-slate-950/45 text-white opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 focus-visible:outline-none"
+                          >
+                            <span className="rounded-full bg-slate-950/70 p-3">
+                              <Eye className="h-6 w-6" />
+                            </span>
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex items-start justify-between gap-2">
+                    <h4 className="font-semibold text-slate-900">{property.name}</h4>
+                    {canEditCatalog && <button type="button" onClick={() => editProperty(property)} aria-label={`Edit ${property.name}`} className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"><Pencil className="h-3.5 w-3.5" /> Edit</button>}
+                  </div>
                   <p className="mt-1 flex items-start gap-1.5 text-xs text-slate-600"><MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0" />{property.address}</p>
                   <p className="mt-3 text-sm font-bold text-indigo-700">{money(property.monthlyRent)} <span className="text-xs font-normal text-slate-500">/ month</span></p>
                   {property.details && <p className="mt-1 text-xs text-slate-500">{property.details}</p>}
@@ -533,13 +875,17 @@ export const OperationsDashboard: React.FC<Props> = ({
                 <p className="text-xs text-slate-500">{availableCourts.length} courts available for selected booking time</p>
               </div>
             </div>
-            {canEditCatalog && <button onClick={() => setActiveForm(activeForm === 'court' ? null : 'court')} className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white"><PlusCircle className="h-4 w-4" /> Add court</button>}
+            {canEditCatalog && <button onClick={() => {
+              setCourtForm({ name: '', notes: '' });
+              setEditingCatalogId(null);
+              setActiveForm(activeForm === 'court' && !editingCatalogId ? null : 'court');
+            }} className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white"><PlusCircle className="h-4 w-4" /> Add court</button>}
           </div>
           {activeForm === 'court' && canEditCatalog && (
             <div className="mb-4 grid gap-3 rounded-xl bg-slate-50 p-4 sm:grid-cols-2">
               <label><span className={labelClass}>Court name or number</span><input className={inputClass} value={courtForm.name} onChange={(e) => setCourtForm({ ...courtForm, name: e.target.value })} placeholder="Court 5" /></label>
               <label><span className={labelClass}>Notes (optional)</span><input className={inputClass} value={courtForm.notes} onChange={(e) => setCourtForm({ ...courtForm, notes: e.target.value })} /></label>
-              <div className="flex gap-2 sm:col-span-2"><button onClick={addCourt} className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white">Save court</button><button onClick={() => setActiveForm(null)} className="rounded-lg border border-slate-300 px-4 py-2 text-xs">Cancel</button></div>
+              <div className="flex gap-2 sm:col-span-2"><button onClick={saveCourt} className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white">{editingCatalogId ? 'Save changes' : 'Save court'}</button><button onClick={cancelCatalogEdit} className="rounded-lg border border-slate-300 px-4 py-2 text-xs">Cancel</button></div>
             </div>
           )}
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
@@ -548,7 +894,10 @@ export const OperationsDashboard: React.FC<Props> = ({
                 availableFor(court.id, bookingForm.date, bookingForm.startTime, bookingForm.endTime);
               return <article key={court.id} className="rounded-xl border border-slate-200 p-3">
                 <div className="flex items-center justify-between gap-2">
-                  <h4 className="font-semibold text-slate-900">{court.name}</h4>
+                  <div className="flex items-center gap-2">
+                    <h4 className="font-semibold text-slate-900">{court.name}</h4>
+                    {canEditCatalog && <button type="button" onClick={() => editCourt(court)} aria-label={`Edit ${court.name}`} className="rounded p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-900"><Pencil className="h-3.5 w-3.5" /></button>}
+                  </div>
                   <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${isAvailable ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-700'}`}>{isAvailable ? 'Available' : 'Booked'}</span>
                 </div>
                 {court.notes && <p className="mt-1 text-xs text-slate-500">{court.notes}</p>}
@@ -589,7 +938,12 @@ export const OperationsDashboard: React.FC<Props> = ({
                 <p className="text-xs text-slate-500">{data.jewelry.reduce((sum, item) => sum + item.quantity, 0)} pieces in stock across {data.jewelry.length} items</p>
               </div>
             </div>
-            {canEditCatalog && <button onClick={() => setActiveForm(activeForm === 'jewelry' ? null : 'jewelry')} className="inline-flex items-center gap-1 rounded-lg bg-amber-600 px-3 py-2 text-xs font-semibold text-white"><PlusCircle className="h-4 w-4" /> Add jewelry</button>}
+            {canEditCatalog && <button onClick={() => {
+              setJewelryForm({ sku: '', name: '', description: '', cost: '', price: '', quantity: '1', photos: [] });
+              setEditingCatalogId(null);
+              setPhotoError('');
+              setActiveForm(activeForm === 'jewelry' && !editingCatalogId ? null : 'jewelry');
+            }} className="inline-flex items-center gap-1 rounded-lg bg-amber-600 px-3 py-2 text-xs font-semibold text-white"><PlusCircle className="h-4 w-4" /> Add jewelry</button>}
           </div>
           <div className="mb-4 grid gap-3 sm:grid-cols-3">
             <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
@@ -618,20 +972,38 @@ export const OperationsDashboard: React.FC<Props> = ({
               <label><span className={labelClass}>Description (optional)</span><input className={inputClass} value={jewelryForm.description} onChange={(e) => setJewelryForm({ ...jewelryForm, description: e.target.value })} /></label>
               <div className="sm:col-span-2 lg:col-span-3">
                 <label className={labelClass}>Jewelry photos (multiple images allowed)</label>
-                <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700"><Camera className="h-4 w-4" /> Choose images<input type="file" accept="image/*" multiple className="sr-only" onChange={(e) => { void handlePhotos(e.target.files); e.currentTarget.value = ''; }} /></label>
+                <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700"><Camera className="h-4 w-4" /> Choose images<input type="file" accept="image/*" multiple className="sr-only" onChange={(e) => { void handlePhotos(e.target.files).then((photos) => { if (photos.length) setJewelryForm((form) => ({ ...form, photos: [...form.photos, ...photos] })); }); e.currentTarget.value = ''; }} /></label>
                 {photoError && <p role="alert" className="mt-2 text-xs text-rose-700">{photoError}</p>}
                 {jewelryForm.photos.length > 0 && <div className="mt-3 flex flex-wrap gap-2">{jewelryForm.photos.map((photo, index) => <div key={`${index}-${photo.slice(0, 24)}`} className="relative"><img src={photo} alt={`Jewelry upload ${index + 1}`} className="h-16 w-16 rounded-lg object-cover" /><button aria-label={`Remove photo ${index + 1}`} onClick={() => setJewelryForm({ ...jewelryForm, photos: jewelryForm.photos.filter((_, photoIndex) => photoIndex !== index) })} className="absolute -right-1 -top-1 rounded-full bg-slate-900 p-0.5 text-white"><X className="h-3 w-3" /></button></div>)}</div>}
               </div>
-              <div className="flex gap-2 sm:col-span-2 lg:col-span-3"><button onClick={addJewelry} className="rounded-lg bg-amber-600 px-4 py-2 text-xs font-semibold text-white">Save inventory item</button><button onClick={() => setActiveForm(null)} className="rounded-lg border border-slate-300 px-4 py-2 text-xs">Cancel</button></div>
+              <div className="flex gap-2 sm:col-span-2 lg:col-span-3"><button onClick={saveJewelryItem} className="rounded-lg bg-amber-600 px-4 py-2 text-xs font-semibold text-white">{editingCatalogId ? 'Save changes' : 'Save inventory item'}</button><button onClick={cancelCatalogEdit} className="rounded-lg border border-slate-300 px-4 py-2 text-xs">Cancel</button></div>
             </div>
           )}
           {canViewJewelry && data.jewelry.length > 0 && (
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {data.jewelry.map((item) => (
-                <article key={item.id} className="overflow-hidden rounded-xl border border-slate-200">
-                  {item.photos.length > 0 && <div className="flex gap-1 overflow-x-auto bg-slate-100 p-1">{item.photos.map((photo, index) => <img key={index} src={photo} alt={`${item.name} ${index + 1}`} className="h-40 min-w-0 flex-1 object-cover" />)}</div>}
+                <article key={item.id} className="min-w-0 overflow-hidden rounded-xl border border-slate-200">
+                  {item.photos.length > 0 && (
+                    <div className="flex min-w-0 gap-1 overflow-x-auto bg-slate-100 p-1">
+                      {item.photos.map((photo, index) => (
+                        <div key={index} className={`group relative h-40 ${item.photos.length === 1 ? 'w-full shrink-0' : 'w-48 shrink-0'}`}>
+                          <img src={photo} alt={`${item.name} ${index + 1}`} className="h-full w-full object-cover" />
+                          <button
+                            type="button"
+                            onClick={() => setPhotoPreview({ itemId: item.id, photoIndex: index })}
+                            aria-label={`View ${item.name} details, photo ${index + 1}`}
+                            className="absolute inset-0 flex items-center justify-center bg-slate-950/45 text-white opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 focus-visible:outline-none"
+                          >
+                            <span className="rounded-full bg-slate-950/70 p-3">
+                              <Eye className="h-6 w-6" />
+                            </span>
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   <div className="p-3">
-                    <div className="flex items-start justify-between gap-2"><div><h4 className="font-semibold text-slate-900">{item.name}</h4><p className="text-[11px] text-slate-500">SKU {item.sku}</p></div><span className="rounded-full bg-amber-50 px-2 py-1 text-[10px] font-semibold text-amber-800">{item.quantity} in stock</span></div>
+                    <div className="flex items-start justify-between gap-2"><div><h4 className="font-semibold text-slate-900">{item.name}</h4><p className="text-[11px] text-slate-500">SKU {item.sku}</p></div><div className="flex items-center gap-2">{canEditCatalog && <button type="button" onClick={() => editJewelryItem(item)} aria-label={`Edit ${item.name}`} className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-2 py-1 text-[10px] font-semibold text-slate-700 hover:bg-slate-50"><Pencil className="h-3 w-3" /> Edit</button>}<span className="rounded-full bg-amber-50 px-2 py-1 text-[10px] font-semibold text-amber-800">{item.quantity} in stock</span></div></div>
                     {item.description && <p className="mt-2 text-xs text-slate-500">{item.description}</p>}
                     <div className="mt-3 flex justify-between gap-2 text-xs"><span className="text-slate-500">Unit cost: {money(item.unitCost)}</span><strong className="text-slate-900">Sell: {money(item.sellingPrice)}</strong></div>
                   </div>
@@ -659,6 +1031,206 @@ export const OperationsDashboard: React.FC<Props> = ({
             </div>
           )}
         </section>
+      )}
+
+      {previewItem && previewPhoto && photoPreview && (
+        <div
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setPhotoPreview(null);
+          }}
+          className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-950/75 p-4 backdrop-blur-sm"
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="jewelry-preview-title"
+            className="my-auto w-full max-w-4xl overflow-hidden rounded-2xl bg-white shadow-2xl"
+          >
+            <header className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
+              <div>
+                <h2 id="jewelry-preview-title" className="text-lg font-bold text-slate-900">{previewItem.name}</h2>
+                <p className="text-xs text-slate-500">SKU {previewItem.sku} · Photo {photoPreview.photoIndex + 1} of {previewItem.photos.length}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPhotoPreview(null)}
+                aria-label="Close jewelry details"
+                className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </header>
+            <div className="grid md:grid-cols-[minmax(0,1.6fr)_minmax(250px,1fr)]">
+              <div className="relative flex min-h-64 items-center justify-center bg-slate-950 p-4">
+                <img
+                  src={previewPhoto}
+                  alt={`${previewItem.name} enlarged`}
+                  className="max-h-[65vh] max-w-full object-contain"
+                />
+                {previewItem.photos.length > 1 && (
+                  <>
+                    <button
+                      type="button"
+                      aria-label="Previous jewelry photo"
+                      onClick={() => setPhotoPreview({
+                        itemId: previewItem.id,
+                        photoIndex: (photoPreview.photoIndex - 1 + previewItem.photos.length) % previewItem.photos.length,
+                      })}
+                      className="absolute left-3 rounded-full bg-white/90 p-2 text-slate-900 shadow hover:bg-white"
+                    >
+                      <ChevronLeft className="h-5 w-5" />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="Next jewelry photo"
+                      onClick={() => setPhotoPreview({
+                        itemId: previewItem.id,
+                        photoIndex: (photoPreview.photoIndex + 1) % previewItem.photos.length,
+                      })}
+                      className="absolute right-3 rounded-full bg-white/90 p-2 text-slate-900 shadow hover:bg-white"
+                    >
+                      <ChevronRight className="h-5 w-5" />
+                    </button>
+                  </>
+                )}
+              </div>
+              <div className="space-y-5 p-5">
+                <div>
+                  <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">Item details</h3>
+                  <p className="mt-2 text-sm text-slate-700">{previewItem.description || 'No description provided.'}</p>
+                </div>
+                <dl className="grid grid-cols-2 gap-3 text-sm">
+                  <div><dt className="text-xs text-slate-500">In stock</dt><dd className="mt-1 font-semibold text-slate-900">{previewItem.quantity}</dd></div>
+                  <div><dt className="text-xs text-slate-500">Unit cost</dt><dd className="mt-1 font-semibold text-slate-900">{money(previewItem.unitCost)}</dd></div>
+                  <div><dt className="text-xs text-slate-500">Selling price</dt><dd className="mt-1 font-semibold text-slate-900">{money(previewItem.sellingPrice)}</dd></div>
+                  <div><dt className="text-xs text-slate-500">Stock cost total</dt><dd className="mt-1 font-semibold text-slate-900">{money(previewItem.unitCost * previewItem.quantity)}</dd></div>
+                  <div><dt className="text-xs text-slate-500">Stock selling value</dt><dd className="mt-1 font-semibold text-indigo-700">{money(previewItem.sellingPrice * previewItem.quantity)}</dd></div>
+                  <div><dt className="text-xs text-slate-500">Recorded sales revenue</dt><dd className="mt-1 font-semibold text-emerald-700">{money(previewRevenue)}</dd></div>
+                </dl>
+                {previewItem.photos.length > 1 && (
+                  <div>
+                    <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Photos</h3>
+                    <div className="flex gap-2 overflow-x-auto">
+                      {previewItem.photos.map((photo, index) => (
+                        <button
+                          key={index}
+                          type="button"
+                          aria-label={`Show photo ${index + 1}`}
+                          aria-pressed={photoPreview.photoIndex === index}
+                          onClick={() => setPhotoPreview({ itemId: previewItem.id, photoIndex: index })}
+                          className={`shrink-0 overflow-hidden rounded-lg border-2 ${photoPreview.photoIndex === index ? 'border-indigo-600' : 'border-transparent'}`}
+                        >
+                          <img src={photo} alt="" className="h-14 w-14 object-cover" />
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+              </div>
+            </div>
+          </section>
+        </div>
+      )}
+      {previewProperty && previewPropertyPhoto && propertyPreview && (
+        <div
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setPropertyPreview(null);
+          }}
+          className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-950/75 p-4 backdrop-blur-sm"
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="property-preview-title"
+            className="my-auto w-full max-w-4xl overflow-hidden rounded-2xl bg-white shadow-2xl"
+          >
+            <header className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
+              <div>
+                <h2 id="property-preview-title" className="text-lg font-bold text-slate-900">{previewProperty.name}</h2>
+                <p className="text-xs text-slate-500">Photo {propertyPreview.photoIndex + 1} of {previewProperty.photos.length}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPropertyPreview(null)}
+                aria-label="Close property details"
+                className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </header>
+            <div className="grid md:grid-cols-[minmax(0,1.6fr)_minmax(250px,1fr)]">
+              <div className="relative flex min-h-64 items-center justify-center bg-slate-950 p-4">
+                <img
+                  src={previewPropertyPhoto}
+                  alt={`${previewProperty.name} enlarged`}
+                  className="max-h-[65vh] max-w-full object-contain"
+                />
+                {previewProperty.photos.length > 1 && (
+                  <>
+                    <button
+                      type="button"
+                      aria-label="Previous property photo"
+                      onClick={() => setPropertyPreview({
+                        propertyId: previewProperty.id,
+                        photoIndex: (propertyPreview.photoIndex - 1 + previewProperty.photos.length) % previewProperty.photos.length,
+                      })}
+                      className="absolute left-3 rounded-full bg-white/90 p-2 text-slate-900 shadow hover:bg-white"
+                    >
+                      <ChevronLeft className="h-5 w-5" />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="Next property photo"
+                      onClick={() => setPropertyPreview({
+                        propertyId: previewProperty.id,
+                        photoIndex: (propertyPreview.photoIndex + 1) % previewProperty.photos.length,
+                      })}
+                      className="absolute right-3 rounded-full bg-white/90 p-2 text-slate-900 shadow hover:bg-white"
+                    >
+                      <ChevronRight className="h-5 w-5" />
+                    </button>
+                  </>
+                )}
+              </div>
+              <div className="space-y-5 p-5">
+                <div>
+                  <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">Property details</h3>
+                  <p className="mt-2 flex items-start gap-1.5 text-sm text-slate-700">
+                    <MapPin className="mt-0.5 h-4 w-4 shrink-0" />
+                    {previewProperty.address}
+                  </p>
+                  {previewProperty.details && <p className="mt-3 text-sm text-slate-600">{previewProperty.details}</p>}
+                </div>
+                <div className="rounded-xl bg-indigo-50 p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-indigo-600">Monthly rent</p>
+                  <p className="mt-1 text-xl font-bold text-indigo-800">{money(previewProperty.monthlyRent)}</p>
+                </div>
+                {previewProperty.photos.length > 1 && (
+                  <div>
+                    <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Photos</h3>
+                    <div className="flex gap-2 overflow-x-auto">
+                      {previewProperty.photos.map((photo, index) => (
+                        <button
+                          key={index}
+                          type="button"
+                          aria-label={`Show property photo ${index + 1}`}
+                          aria-pressed={propertyPreview.photoIndex === index}
+                          onClick={() => setPropertyPreview({ propertyId: previewProperty.id, photoIndex: index })}
+                          className={`shrink-0 overflow-hidden rounded-lg border-2 ${propertyPreview.photoIndex === index ? 'border-indigo-600' : 'border-transparent'}`}
+                        >
+                          <img src={photo} alt="" className="h-14 w-14 object-cover" />
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </section>
+        </div>
       )}
     </div>
   );
