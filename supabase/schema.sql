@@ -447,10 +447,10 @@ WITH CHECK (
     AND processed_by = auth.uid()
 );
 
-CREATE POLICY "Real estate staff can update property bookings"
+CREATE POLICY "Owner can update property bookings"
 ON public.property_bookings FOR UPDATE TO authenticated
-USING (public.has_business_access('real_estate'))
-WITH CHECK (public.has_business_access('real_estate'));
+USING (public.is_jasmin_owner())
+WITH CHECK (public.is_jasmin_owner());
 
 CREATE POLICY "Jewelry staff can view inventory"
 ON public.jewelry_inventory FOR SELECT TO authenticated
@@ -481,10 +481,10 @@ WITH CHECK (
     AND processed_by = auth.uid()
 );
 
-CREATE POLICY "Pickleball staff update bookings"
+CREATE POLICY "Owner can update court bookings"
 ON public.court_bookings FOR UPDATE TO authenticated
-USING (public.has_business_access('pickleball'))
-WITH CHECK (public.has_business_access('pickleball'));
+USING (public.is_jasmin_owner())
+WITH CHECK (public.is_jasmin_owner());
 
 CREATE POLICY "Jewelry staff view sales"
 ON public.jewelry_sales FOR SELECT TO authenticated

@@ -10,6 +10,7 @@ import {
   Pencil,
   PlusCircle,
   ShoppingBag,
+  Ban,
   X,
 } from 'lucide-react';
 import { UserAccount } from '../types/erp';
@@ -33,6 +34,7 @@ interface PropertyBookingRecord {
   customerName: string;
   monthlyRent: number;
   processedBy: string;
+  status: 'confirmed' | 'cancelled';
 }
 
 interface JewelryItem {
@@ -62,6 +64,7 @@ interface BookingRecord {
   customerName: string;
   amount: number;
   processedBy: string;
+  status: 'confirmed' | 'cancelled';
 }
 
 interface JewelrySaleRecord {
@@ -109,6 +112,56 @@ const EMPTY_DATA: OperationsData = {
   bookings: [],
   sales: [],
 };
+
+function addOneDay(date: string): string {
+  const nextDate = new Date(`${date}T00:00:00.000Z`);
+  nextDate.setUTCDate(nextDate.getUTCDate() + 1);
+  return nextDate.toISOString().slice(0, 10);
+}
+
+function formatBookingDate(date: string): string {
+  return new Date(`${date}T00:00:00.000Z`).toLocaleDateString('en-PH', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
+}
+
+function propertyBookingStatus(bookings: PropertyBookingRecord[], propertyId: string) {
+  const upcoming = bookings
+    .filter((booking) => booking.status === 'confirmed' && booking.propertyId === propertyId && booking.endDate >= TODAY)
+    .sort((a, b) => a.startDate.localeCompare(b.startDate));
+  const ranges = upcoming.reduce<Array<{ startDate: string; endDate: string }>>((merged, booking) => {
+    const lastRange = merged[merged.length - 1];
+    if (lastRange && booking.startDate <= addOneDay(lastRange.endDate)) {
+      if (booking.endDate > lastRange.endDate) lastRange.endDate = booking.endDate;
+    } else {
+      merged.push({ startDate: booking.startDate, endDate: booking.endDate });
+    }
+    return merged;
+  }, []);
+
+  const currentBooking = ranges.find((range) => range.startDate <= TODAY && range.endDate >= TODAY);
+  if (currentBooking) {
+    return {
+      label: 'Booked',
+      detail: `Available from ${formatBookingDate(addOneDay(currentBooking.endDate))}`,
+      isBooked: true,
+    };
+  }
+
+  const nextBooking = ranges[0];
+  if (nextBooking) {
+    return {
+      label: 'Available now',
+      detail: `Next booked ${formatBookingDate(nextBooking.startDate)}–${formatBookingDate(nextBooking.endDate)} · available again ${formatBookingDate(addOneDay(nextBooking.endDate))}`,
+      isBooked: false,
+    };
+  }
+
+  return { label: 'Available', detail: 'Available now · no upcoming bookings', isBooked: false };
+}
 
 const newId = () => globalThis.crypto?.randomUUID?.() || `record-${Date.now()}-${Math.random()}`;
 const money = (amount: number) => `₱${amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
@@ -313,6 +366,7 @@ export const OperationsDashboard: React.FC<Props> = ({
         customerName: row.customer_name,
         monthlyRent: Number(row.monthly_rent),
         processedBy: row.processed_by,
+        status: row.status,
       }));
       const bookings = bookingResult.data.map((row) => ({
         id: row.id,
@@ -323,6 +377,7 @@ export const OperationsDashboard: React.FC<Props> = ({
         customerName: row.customer_name,
         amount: Number(row.amount),
         processedBy: row.processed_by,
+        status: row.status,
       }));
       const sales = saleResult.data.map((row) => ({
         id: row.id,
@@ -351,11 +406,60 @@ export const OperationsDashboard: React.FC<Props> = ({
 
   const availableFor = (courtId: string, date: string, startTime: string, endTime: string) =>
     !data.bookings.some((booking) =>
+      booking.status === 'confirmed' &&
       booking.courtId === courtId &&
       booking.date === date &&
       startTime < booking.endTime &&
       endTime > booking.startTime
     );
+
+  const cancelPropertyBooking = async (booking: PropertyBookingRecord) => {
+    if (!isOwner) {
+      setMessage('Only an owner can cancel a property booking.');
+      return;
+    }
+    if (booking.status !== 'confirmed' || booking.endDate < TODAY) return;
+    if (!window.confirm(`Cancel the property booking for ${booking.customerName} from ${booking.startDate} to ${booking.endDate}?\n\nThis updates booking availability but does not remove any existing ledger transaction or record a refund.`)) return;
+    try {
+      const { data: updated, error } = await supabase!
+        .from('property_bookings')
+        .update({ status: 'cancelled' })
+        .eq('id', booking.id)
+        .eq('status', 'confirmed')
+        .select('id')
+        .maybeSingle();
+      if (error) throw new Error(error.message);
+      if (!updated) throw new Error('This booking was already cancelled or is no longer available to cancel. Refresh the list and try again.');
+    } catch (error) {
+      setMessage(`Could not cancel property booking: ${error instanceof Error ? error.message : 'Supabase could not be reached.'}`);
+      return;
+    }
+    await refreshData();
+  };
+
+  const cancelCourtBooking = async (booking: BookingRecord) => {
+    if (!isOwner) {
+      setMessage('Only an owner can cancel a court booking.');
+      return;
+    }
+    if (booking.status !== 'confirmed' || booking.date < TODAY) return;
+    if (!window.confirm(`Cancel the court booking for ${booking.customerName} on ${booking.date}, ${booking.startTime}–${booking.endTime}?\n\nThis updates booking availability but does not remove any existing ledger transaction or record a refund.`)) return;
+    try {
+      const { data: updated, error } = await supabase!
+        .from('court_bookings')
+        .update({ status: 'cancelled' })
+        .eq('id', booking.id)
+        .eq('status', 'confirmed')
+        .select('id')
+        .maybeSingle();
+      if (error) throw new Error(error.message);
+      if (!updated) throw new Error('This booking was already cancelled or is no longer available to cancel. Refresh the list and try again.');
+    } catch (error) {
+      setMessage(`Could not cancel court booking: ${error instanceof Error ? error.message : 'Supabase could not be reached.'}`);
+      return;
+    }
+    await refreshData();
+  };
 
   const availableCourts = data.courts.filter((court) =>
     !bookingForm.startTime ||
@@ -405,6 +509,7 @@ export const OperationsDashboard: React.FC<Props> = ({
 
   const propertyAvailableFor = (propertyId: string, startDate: string, endDate: string) =>
     !data.propertyBookings.some((booking) =>
+      booking.status === 'confirmed' &&
       booking.propertyId === propertyId &&
       startDate <= booking.endDate &&
       endDate >= booking.startDate
@@ -807,6 +912,21 @@ export const OperationsDashboard: React.FC<Props> = ({
             <div className="grid gap-3 md:grid-cols-2">
               {data.properties.map((property) => (
                 <article key={property.id} className="min-w-0 rounded-xl border border-slate-200 p-4">
+                  {(() => {
+                    const bookingStatus = propertyBookingStatus(data.propertyBookings, property.id);
+                    return (
+                      <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <span className={`inline-flex rounded-full px-2.5 py-1 text-[11px] font-semibold ${
+                            bookingStatus.isBooked ? 'bg-rose-100 text-rose-800' : 'bg-emerald-100 text-emerald-800'
+                          }`}>
+                            {bookingStatus.label}
+                          </span>
+                          <p className="mt-1 text-[11px] text-slate-600">{bookingStatus.detail}</p>
+                        </div>
+                      </div>
+                    );
+                  })()}
                   {property.photos.length > 0 && (
                     <div className="mb-3 flex min-w-0 gap-2 overflow-x-auto pb-1">
                       {property.photos.map((photo, index) => (
@@ -859,7 +979,34 @@ export const OperationsDashboard: React.FC<Props> = ({
                   </div>
                 </div>
               )}
-              {data.propertyBookings.length > 0 && <div className="mt-3 divide-y divide-slate-100">{data.propertyBookings.map((booking) => <div key={booking.id} className="flex flex-wrap justify-between gap-2 py-2 text-xs"><span className="font-semibold text-slate-800">{data.properties.find((property) => property.id === booking.propertyId)?.name || 'Property'} • {booking.startDate} to {booking.endDate}</span><span className="text-slate-500">{booking.customerName} • {money(booking.monthlyRent)}/month • {booking.processedBy}</span></div>)}</div>}
+              {data.propertyBookings.length > 0 && (
+                <div className="mt-3 divide-y divide-slate-100">
+                  {data.propertyBookings.map((booking) => (
+                    <div key={booking.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-xs">
+                      <div>
+                        <span className="font-semibold text-slate-800">
+                          {data.properties.find((property) => property.id === booking.propertyId)?.name || 'Property'} • {booking.startDate} to {booking.endDate}
+                        </span>
+                        <span className={`ml-2 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                          booking.status === 'cancelled' ? 'bg-slate-100 text-slate-600' : 'bg-emerald-100 text-emerald-800'
+                        }`}>
+                          {booking.status === 'cancelled' ? 'Cancelled' : 'Confirmed'}
+                        </span>
+                        <p className="mt-1 text-slate-500">{booking.customerName} • {money(booking.monthlyRent)}/month • {booking.processedBy}</p>
+                      </div>
+                      {isOwner && booking.status === 'confirmed' && booking.endDate >= TODAY && (
+                        <button
+                          type="button"
+                          onClick={() => { void cancelPropertyBooking(booking); }}
+                          className="inline-flex items-center gap-1 rounded-md border border-rose-200 px-2.5 py-1.5 font-semibold text-rose-700 hover:bg-rose-50"
+                        >
+                          <Ban className="h-3.5 w-3.5" /> Cancel booking
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </section>
@@ -922,7 +1069,34 @@ export const OperationsDashboard: React.FC<Props> = ({
                   <div className="flex gap-2 sm:col-span-2 lg:col-span-3"><button onClick={addBooking} className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white">Save booking</button><button onClick={() => setActiveForm(null)} className="rounded-lg border border-slate-300 px-4 py-2 text-xs">Cancel</button></div>
                 </div>
               )}
-              {data.bookings.length > 0 && <div className="mt-3 divide-y divide-slate-100">{data.bookings.map((booking) => <div key={booking.id} className="flex flex-wrap justify-between gap-2 py-2 text-xs"><span className="font-semibold text-slate-800">{data.courts.find((court) => court.id === booking.courtId)?.name || 'Court'} • {booking.date} • {booking.startTime}–{booking.endTime}</span><span className="text-slate-500">{booking.customerName} • {money(booking.amount)} • {booking.processedBy}</span></div>)}</div>}
+              {data.bookings.length > 0 && (
+                <div className="mt-3 divide-y divide-slate-100">
+                  {data.bookings.map((booking) => (
+                    <div key={booking.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-xs">
+                      <div>
+                        <span className="font-semibold text-slate-800">
+                          {data.courts.find((court) => court.id === booking.courtId)?.name || 'Court'} • {booking.date} • {booking.startTime}–{booking.endTime}
+                        </span>
+                        <span className={`ml-2 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                          booking.status === 'cancelled' ? 'bg-slate-100 text-slate-600' : 'bg-emerald-100 text-emerald-800'
+                        }`}>
+                          {booking.status === 'cancelled' ? 'Cancelled' : 'Confirmed'}
+                        </span>
+                        <p className="mt-1 text-slate-500">{booking.customerName} • {money(booking.amount)} • {booking.processedBy}</p>
+                      </div>
+                      {isOwner && booking.status === 'confirmed' && booking.date >= TODAY && (
+                        <button
+                          type="button"
+                          onClick={() => { void cancelCourtBooking(booking); }}
+                          className="inline-flex items-center gap-1 rounded-md border border-rose-200 px-2.5 py-1.5 font-semibold text-rose-700 hover:bg-rose-50"
+                        >
+                          <Ban className="h-3.5 w-3.5" /> Cancel booking
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </section>

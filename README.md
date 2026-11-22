@@ -27,6 +27,8 @@ Catalog records, compressed property and jewelry photos, bookings, jewelry sales
 
 Apply `supabase/schema.sql` in the configured Supabase project's SQL Editor. In Supabase Auth, invite/create each user, then add a matching `user_profiles` row using the Auth user's UUID and email. Assign the `owner` role to the owner account; database policies allow owners to modify catalogs or upload catalog photos. Add staff access rows for `real_estate`, `pickleball`, and `jewelry` in `user_business_access`. Users sign in with their Supabase email and password.
 
+For an existing Supabase project, also apply `supabase/cancel_booking_rls.sql` to allow owner-only booking cancellations while retaining the booking records.
+
 The app reads `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` from `.env`. Restart the Vite server after changing these values. The anon key is intended for browser use; never put a Supabase service-role key in a `VITE_` variable. Older browser-local records are not imported automatically; an owner can use the dashboard's **Import saved browser data** action to copy this browser's saved catalogs, photos, bookings, sales, and transactions into Supabase. The local copy is preserved. Historical browser audit rows are not imported because the Supabase audit table is append-only; Supabase records the import actions as new audit events.
 
 ## How to Run Locally (Full React + Vite Project)
