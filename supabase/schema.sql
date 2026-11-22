@@ -432,6 +432,58 @@ ADD COLUMN transaction_id UUID REFERENCES public.transactions(id);
 CREATE UNIQUE INDEX jewelry_sales_transaction_id_uidx
 ON public.jewelry_sales(transaction_id);
 
+CREATE OR REPLACE FUNCTION public.link_jewelry_sale_transaction(p_sale_id UUID, p_transaction_id UUID)
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_sale public.jewelry_sales%ROWTYPE;
+    v_transaction public.transactions%ROWTYPE;
+    v_item_name TEXT;
+BEGIN
+    IF auth.uid() IS NULL OR NOT public.has_business_access('jewelry') THEN
+        RAISE EXCEPTION 'Jewelry business access is required to link this sale.';
+    END IF;
+
+    SELECT * INTO v_sale FROM public.jewelry_sales WHERE id = p_sale_id FOR UPDATE;
+    IF NOT FOUND OR v_sale.processed_by <> auth.uid() THEN
+        RAISE EXCEPTION 'You can only link a jewelry sale that you recorded.';
+    END IF;
+    IF v_sale.transaction_id IS NOT NULL THEN
+        IF v_sale.transaction_id = p_transaction_id THEN
+            RETURN;
+        END IF;
+        RAISE EXCEPTION 'This jewelry sale is already linked to a different ledger transaction.';
+    END IF;
+
+    SELECT name INTO v_item_name
+    FROM public.jewelry_inventory
+    WHERE id = v_sale.inventory_item_id;
+
+    SELECT * INTO v_transaction
+    FROM public.transactions
+    WHERE id = p_transaction_id;
+    IF NOT FOUND
+       OR v_transaction.business_id <> 'jewelry'
+       OR v_transaction.tx_type <> 'INCOME'
+       OR v_transaction.submitted_by <> auth.uid()
+       OR v_transaction.counterparty_name <> v_sale.customer_name
+       OR v_transaction.description <> v_item_name || ' × ' || v_sale.quantity::TEXT
+       OR v_transaction.amount <> ROUND(v_sale.unit_price * v_sale.quantity, 2) THEN
+        RAISE EXCEPTION 'The ledger entry does not match this jewelry sale.';
+    END IF;
+
+    UPDATE public.jewelry_sales
+    SET transaction_id = p_transaction_id
+    WHERE id = p_sale_id AND transaction_id IS NULL;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.link_jewelry_sale_transaction(UUID, UUID) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.link_jewelry_sale_transaction(UUID, UUID) TO authenticated;
+
 CREATE OR REPLACE FUNCTION public.return_jewelry_sale(p_sale_id UUID)
 RETURNS UUID
 LANGUAGE plpgsql
@@ -446,6 +498,8 @@ DECLARE
     v_reference TEXT;
     v_owner_name TEXT;
     v_amount NUMERIC(14, 2);
+    v_match_count INTEGER;
+    v_item_name TEXT;
 BEGIN
     IF auth.uid() IS NULL OR NOT public.is_jasmin_owner() THEN
         RAISE EXCEPTION 'Only an owner can process jewelry returns.';
@@ -466,7 +520,27 @@ BEGIN
         RAISE EXCEPTION 'This jewelry sale has already been returned or refunded.';
     END IF;
     IF v_sale.transaction_id IS NULL THEN
-        RAISE EXCEPTION 'This sale is not linked to its ledger transaction. Apply the jewelry_returns migration and verify the historical transaction match.';
+        SELECT name INTO v_item_name
+        FROM public.jewelry_inventory
+        WHERE id = v_sale.inventory_item_id;
+
+        SELECT COUNT(*), (ARRAY_AGG(t.id))[1]
+        INTO v_match_count, v_sale.transaction_id
+        FROM public.transactions t
+        WHERE t.business_id = 'jewelry'
+          AND t.tx_type = 'INCOME'
+          AND t.category = 'Bespoke Diamond & Gold Sales'
+          AND t.counterparty_name = v_sale.customer_name
+          AND t.description = v_item_name || ' × ' || v_sale.quantity::TEXT
+          AND t.amount = ROUND(v_sale.unit_price * v_sale.quantity, 2)
+          AND t.tx_date = v_sale.sold_at::DATE
+          AND t.status IN ('APPROVED', 'PENDING_APPROVAL');
+        IF v_match_count <> 1 THEN
+            RAISE EXCEPTION 'Could not find exactly one matching original sale transaction (found %). The sale was not refunded.', v_match_count;
+        END IF;
+        UPDATE public.jewelry_sales
+        SET transaction_id = v_sale.transaction_id
+        WHERE id = p_sale_id AND transaction_id IS NULL;
     END IF;
 
     SELECT * INTO v_original_transaction

@@ -279,15 +279,15 @@ export default function App() {
     return { totalIncome: netRevenue, totalExpense, netCashFlow, totalVat, byBusiness };
   }, [rlsVisibleTransactions]);
 
-  const handleAddTransaction = async (
+  const handleAddTransactionWithId = async (
     newTx: Omit<TransactionRecord, 'id' | 'createdAt'>
-  ): Promise<boolean> => {
+  ): Promise<string | null> => {
     if (!supabase || !session) {
       setPersistenceError('You must be signed in to save transactions to Supabase.');
-      return false;
+      return null;
     }
     try {
-      const { error } = await supabase.from('transactions').insert({
+      const { data, error } = await supabase.from('transactions').insert({
         reference_no: newTx.referenceNo,
         business_id: newTx.businessId,
         tx_type: newTx.txType,
@@ -305,12 +305,21 @@ export default function App() {
         submitted_by: session.user.id,
         submitted_by_name: currentUser.name,
         tx_date: newTx.txDate,
-      });
+      }).select('id').single();
       if (error) throw new Error(error.message);
+      if (!data) throw new Error('Supabase did not return the saved transaction.');
+      return data.id;
     } catch (error) {
       setPersistenceError(`Could not save transaction to Supabase: ${error instanceof Error ? error.message : 'Supabase could not be reached.'}`);
-      return false;
+      return null;
     }
+  };
+
+  const handleAddTransaction = async (
+    newTx: Omit<TransactionRecord, 'id' | 'createdAt'>
+  ): Promise<boolean> => {
+    const transactionId = await handleAddTransactionWithId(newTx);
+    if (!transactionId) return false;
     return loadLedger();
   };
 
@@ -1010,7 +1019,7 @@ export default function App() {
             onJewelrySale={async (itemName, quantity, amount, customerName) => {
               const referenceNo = `JAST-JW-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`;
               const gateRequired = amount > BUSINESS_UNITS.find((unit) => unit.id === 'jewelry')!.approvalThreshold;
-              return handleAddTransaction({
+              const transactionId = await handleAddTransactionWithId({
                 referenceNo,
                 businessId: 'jewelry',
                 txType: 'INCOME',
@@ -1027,6 +1036,8 @@ export default function App() {
                 submittedBy: currentUser.name,
                 txDate: new Date().toISOString().slice(0, 10),
               });
+              if (transactionId) await loadLedger();
+              return transactionId;
             }}
             onCourtBooking={async (courtName, date, amount, customerName) => {
               if (amount <= 0) return true;

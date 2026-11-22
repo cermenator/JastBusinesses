@@ -70,6 +70,7 @@ interface BookingRecord {
 
 interface JewelrySaleRecord {
   id: string;
+  transactionId: string | null;
   itemId: string;
   itemName: string;
   quantity: number;
@@ -93,7 +94,7 @@ interface Props {
   currentUser: UserAccount;
   authUserId: string;
   refreshKey: number;
-  onJewelrySale: (itemName: string, quantity: number, amount: number, customerName: string) => Promise<boolean>;
+  onJewelrySale: (itemName: string, quantity: number, amount: number, customerName: string) => Promise<string | null>;
   onCourtBooking: (courtName: string, date: string, amount: number, customerName: string) => Promise<boolean>;
   onPropertyBooking: (
     propertyName: string,
@@ -397,6 +398,7 @@ export const OperationsDashboard: React.FC<Props> = ({
       }));
       const sales = saleResult.data.map((row) => ({
         id: row.id,
+        transactionId: row.transaction_id || null,
         itemId: row.inventory_item_id,
         itemName: jewelry.find((item) => item.id === row.inventory_item_id)?.name || 'Jewelry item',
         quantity: row.quantity,
@@ -809,28 +811,41 @@ export const OperationsDashboard: React.FC<Props> = ({
     }
     const customerName = saleForm.customerName.trim() || 'Walk-in Customer';
     try {
-      const { error } = await supabase!.from('jewelry_sales').insert({
+      const { data: insertedSale, error } = await supabase!.from('jewelry_sales').insert({
         inventory_item_id: selectedSaleItem.id,
         quantity: saleQuantity,
         unit_price: selectedSaleItem.sellingPrice,
         customer_name: customerName,
         processed_by: authUserId,
-      });
+      }).select('id').single();
       if (error) throw new Error(error.message);
+      if (!insertedSale) throw new Error('Supabase did not return the saved jewelry sale.');
+
+      const transactionId = await onJewelrySale(
+        selectedSaleItem.name,
+        saleQuantity,
+        selectedSaleItem.sellingPrice * saleQuantity,
+        customerName
+      );
+      if (!transactionId) {
+        await refreshData();
+        setMessage('Jewelry sale and stock update were saved, but its ledger transaction was not saved. The sale cannot be refunded until the ledger entry is fixed.');
+        return;
+      }
+
+      const { error: linkError } = await supabase!.rpc('link_jewelry_sale_transaction', {
+        p_sale_id: insertedSale.id,
+        p_transaction_id: transactionId,
+      });
+      if (linkError) throw new Error(`Sale and ledger were saved, but their link failed: ${linkError.message}`);
     } catch (error) {
       setMessage(`Could not save jewelry sale to Supabase: ${error instanceof Error ? error.message : 'Supabase could not be reached.'}`);
+      await refreshData();
       return;
     }
-    const ledgerSaved = await onJewelrySale(
-      selectedSaleItem.name,
-      saleQuantity,
-      selectedSaleItem.sellingPrice * saleQuantity,
-      customerName
-    );
     if (!(await refreshData())) return;
     setSaleForm({ itemId: '', quantity: '1', customerName: '' });
     setActiveForm(null);
-    if (!ledgerSaved) setMessage('Jewelry sale and stock update were saved to Supabase, but its revenue entry could not be saved. Check the ledger error and retry.');
   };
 
   const returnJewelrySale = async (sale: JewelrySaleRecord) => {
@@ -848,6 +863,12 @@ export const OperationsDashboard: React.FC<Props> = ({
     try {
       const { error } = await supabase!.rpc('return_jewelry_sale', { p_sale_id: sale.id });
       if (error) throw new Error(error.message);
+      setData((currentData) => ({
+        ...currentData,
+        sales: currentData.sales.map((currentSale) =>
+          currentSale.id === sale.id ? { ...currentSale, returned: true } : currentSale
+        ),
+      }));
       await refreshData();
       onJewelryReturn();
     } catch (error) {
