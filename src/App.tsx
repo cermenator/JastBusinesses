@@ -431,6 +431,9 @@ export default function App() {
       return;
     }
     await loadLedger();
+    if (tx.businessId === 'jewelry') {
+      setOperationsRefreshKey((key) => key + 1);
+    }
   };
 
   const handleSignOut = async () => {
@@ -1242,27 +1245,21 @@ export default function App() {
             currentUser={currentUser}
             authUserId={session.user.id}
             refreshKey={operationsRefreshKey}
-            onJewelrySale={async (itemName, quantity, amount, customerName) => {
-              const referenceNo = `JAST-JW-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`;
-              const gateRequired = amount > BUSINESS_UNITS.find((unit) => unit.id === 'jewelry')!.approvalThreshold;
-              const transactionId = await handleAddTransactionWithId({
-                referenceNo,
-                businessId: 'jewelry',
-                txType: 'INCOME',
-                category: 'Bespoke Diamond & Gold Sales',
-                counterpartyName: customerName || 'Walk-in Customer',
-                description: `${itemName} × ${quantity}`,
-                amount,
-                vatAmount: Number(((amount / 1.12) * 0.12).toFixed(2)),
-                reconciled: false,
-                status: gateRequired ? 'PENDING_APPROVAL' : 'APPROVED',
-                gateReason: gateRequired
-                  ? 'Exceeds ₱30,000.00 automated threshold'
-                  : 'Auto-cleared within branch operational limit',
-                submittedBy: currentUser.name,
-                txDate: new Date().toISOString().slice(0, 10),
+            onJewelrySale={async (itemId, quantity, customerName) => {
+              if (!supabase) {
+                setPersistenceError('Supabase is not configured.');
+                return null;
+              }
+              const { data: transactionId, error } = await supabase.rpc('submit_jewelry_sale_request', {
+                p_inventory_item_id: itemId,
+                p_quantity: quantity,
+                p_customer_name: customerName,
               });
-              if (transactionId) await loadLedger();
+              if (error || !transactionId) {
+                setPersistenceError(`Could not submit jewelry sale for owner approval: ${error?.message || 'Supabase did not return the pending transaction.'}`);
+                return null;
+              }
+              await loadLedger();
               return transactionId;
             }}
             onCourtBooking={async (courtName, date, amount, customerName) => {

@@ -9,7 +9,7 @@ Full-stack prototype and production blueprint for **Development of an Integrated
    - Multi-tenant `business_units` (`real_estate`, `pickleball`, `jewelry`)
    - Role-Based Access Control (`user_profiles`)
    - PostgreSQL Row-Level Security (`RLS`) policies isolating branch data
-   - Automated **Owner Approval Gate** trigger (`> ₱30,000` or Jewelry inventory write-offs)
+   - Automated **Owner Approval Gate** trigger (every Jewelry transaction; other ventures above `₱30,000`)
    - Immutable `audit_logs` trigger preventing tampering (BIR RMO 1-2020 & Reg. 17-2013 compliant)
 3. **`src/`** — Full React + TypeScript + Vite + Tailwind CSS source code ready for Supabase deployment. The transaction ledger and audit trail can be scoped by venture and downloaded as separate Excel-compatible CSV files. Reports support monthly, yearly, and custom date ranges and print with detailed transaction records.
 
@@ -18,7 +18,7 @@ Full-stack prototype and production blueprint for **Development of an Integrated
 The React app includes an Operations view for:
 
 - Ma'am Jasmin Taurak to add and edit property addresses and monthly rents, jewelry inventory with multiple photos, unit costs, selling prices and stock counts, and pickleball courts.
-- Staff to record property lease bookings with date-overlap checks, court bookings with time-conflict checks, and jewelry sales that reduce on-hand stock and add income to the transaction ledger.
+- Staff to record property lease bookings with date-overlap checks, court bookings with time-conflict checks, and jewelry sale requests. A Jewelry sale is completed and stock reduced only after owner approval.
 - A Supabase-authenticated staff account can be assigned access to real estate, pickleball, and jewelry.
 
 The app does not seed sample business records; it displays the data available to the authenticated user in Supabase. The React app signs users in through Supabase Auth and uses each authenticated user's `user_profiles` role and business access; it does not use a client-side role switcher.
@@ -33,7 +33,7 @@ For an existing Supabase project, also apply `supabase/cancel_booking_rls.sql` t
 
 For an existing Supabase project, apply `supabase/receipt_vault.sql` to enable private receipt uploads and venture-scoped viewing.
 
-For an existing Supabase project, reapply the latest `supabase/jewelry_returns.sql` in the Supabase SQL Editor. It links eligible historical POS sales to their unique ledger transactions, enables owner-only full jewelry sale returns within seven days, marks the original sale cancelled in the immutable audit trail, restores stock, and records the refund against net revenue. If an old sale has no unique matching ledger entry, the migration leaves it unlinked and the app reports that instead of cancelling an unrelated transaction. The actual customer payment must be completed separately.
+For an existing Supabase project, reapply the latest `supabase/jewelry_returns.sql`, then apply `supabase/jewelry_owner_approval.sql` in the Supabase SQL Editor. Every Jewelry transaction then requires owner approval. POS sale requests reserve available stock but do not complete the sale or deduct stock until approved; rejecting or cancelling a request releases the reservation. The migration also preserves owner-only full jewelry sale returns within seven days, marks the original sale cancelled in the immutable audit trail, restores stock, and records the refund against net revenue. If an old sale has no unique matching ledger entry, the returns migration leaves it unlinked and the app reports that instead of cancelling an unrelated transaction. The actual customer refund must be completed separately.
 
 The app reads `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` from `.env`. Restart the Vite server after changing these values. The anon key is intended for browser use; never put a Supabase service-role key in a `VITE_` variable. Older browser-local records are not imported automatically; an owner can use the dashboard's **Import saved browser data** action to copy this browser's saved catalogs, photos, bookings, sales, and transactions into Supabase. The local copy is preserved. Historical browser audit rows are not imported because the Supabase audit table is append-only; Supabase records the import actions as new audit events.
 

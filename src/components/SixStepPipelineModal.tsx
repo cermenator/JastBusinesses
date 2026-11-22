@@ -82,14 +82,14 @@ export const SixStepPipelineModal: React.FC<Props> = ({
 
   // Owner Gate Logic matching PostgreSQL trigger
   const triggersGate =
-    numericAmount > unit.approvalThreshold ||
-    (businessId === 'jewelry' && txType === 'INVENTORY_WRITEOFF');
+    businessId === 'jewelry' ||
+    numericAmount > unit.approvalThreshold;
 
   const gateReason =
-    numericAmount > unit.approvalThreshold
+    businessId === 'jewelry'
+      ? 'All jewelry transactions require Owner authorization'
+      : numericAmount > unit.approvalThreshold
       ? `Exceeds ₱${unit.approvalThreshold.toLocaleString()} automated threshold`
-      : businessId === 'jewelry' && txType === 'INVENTORY_WRITEOFF'
-      ? 'Jewelry vault inventory write-off requires Owner authorization'
       : 'Auto-cleared within branch operational limit';
 
   const generatedRef = `${unit.code}-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
@@ -338,7 +338,9 @@ export const SixStepPipelineModal: React.FC<Props> = ({
                     </h4>
                     <p className="text-xs mt-1">{gateReason}</p>
                     <p className="text-xs mt-2 font-mono opacity-80">
-                      Trigger Rule: amount (₱{numericAmount.toLocaleString()}) &gt; threshold (₱{unit.approvalThreshold.toLocaleString()}) OR jewelry write-off
+                      {businessId === 'jewelry'
+                        ? 'Trigger Rule: all jewelry transactions require Owner approval.'
+                        : `Trigger Rule: amount (₱${numericAmount.toLocaleString()}) > threshold (₱${unit.approvalThreshold.toLocaleString()}).`}
                     </p>
                   </div>
                 </div>

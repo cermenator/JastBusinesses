@@ -59,15 +59,15 @@ BEGIN
        AND public.is_jasmin_owner() THEN
         NEW.status := 'APPROVED';
         NEW.gate_reason := 'Owner-authorized jewelry return/refund';
+    ELSIF NEW.business_id = 'jewelry' THEN
+        NEW.status := 'PENDING_APPROVAL';
+        NEW.gate_reason := 'All jewelry transactions require Owner authorization';
     ELSIF v_threshold IS NULL THEN
         NEW.status := 'APPROVED';
         NEW.gate_reason := 'Auto-cleared within branch operational limit';
     ELSIF NEW.amount > v_threshold THEN
         NEW.status := 'PENDING_APPROVAL';
         NEW.gate_reason := 'Exceeds PHP ' || TO_CHAR(v_threshold, 'FM999,999,990.00') || ' automated threshold';
-    ELSIF NEW.business_id = 'jewelry' AND NEW.tx_type = 'INVENTORY_WRITEOFF' THEN
-        NEW.status := 'PENDING_APPROVAL';
-        NEW.gate_reason := 'Jewelry vault inventory write-off requires Owner authorization';
     ELSE
         NEW.status := 'APPROVED';
         NEW.gate_reason := 'Auto-cleared within branch operational limit';
@@ -127,6 +127,12 @@ RETURNS TRIGGER
 LANGUAGE plpgsql
 AS $$
 BEGIN
+    IF (OLD.business_id = 'jewelry' OR NEW.business_id = 'jewelry')
+       AND OLD.status IS DISTINCT FROM NEW.status
+       AND NOT public.is_jasmin_owner() THEN
+        RAISE EXCEPTION 'Only an owner can change the status of a jewelry transaction.';
+    END IF;
+
     IF OLD.status IS DISTINCT FROM NEW.status
        AND NEW.status = 'CANCELLED'
        AND NOT public.is_jasmin_owner() THEN

@@ -94,7 +94,7 @@ interface Props {
   currentUser: UserAccount;
   authUserId: string;
   refreshKey: number;
-  onJewelrySale: (itemName: string, quantity: number, amount: number, customerName: string) => Promise<string | null>;
+  onJewelrySale: (itemId: string, quantity: number, customerName: string) => Promise<string | null>;
   onCourtBooking: (courtName: string, date: string, amount: number, customerName: string) => Promise<boolean>;
   onPropertyBooking: (
     propertyName: string,
@@ -812,41 +812,25 @@ export const OperationsDashboard: React.FC<Props> = ({
     }
     const customerName = saleForm.customerName.trim() || 'Walk-in Customer';
     try {
-      const { data: insertedSale, error } = await supabase!.from('jewelry_sales').insert({
-        inventory_item_id: selectedSaleItem.id,
-        quantity: saleQuantity,
-        unit_price: selectedSaleItem.sellingPrice,
-        customer_name: customerName,
-        processed_by: authUserId,
-      }).select('id').single();
-      if (error) throw new Error(error.message);
-      if (!insertedSale) throw new Error('Supabase did not return the saved jewelry sale.');
-
       const transactionId = await onJewelrySale(
-        selectedSaleItem.name,
+        selectedSaleItem.id,
         saleQuantity,
-        selectedSaleItem.sellingPrice * saleQuantity,
         customerName
       );
       if (!transactionId) {
         await refreshData();
-        setMessage('Jewelry sale and stock update were saved, but its ledger transaction was not saved. The sale cannot be refunded until the ledger entry is fixed.');
+        setMessage('The jewelry sale request was not saved. No sale was completed and stock was not changed.');
         return;
       }
-
-      const { error: linkError } = await supabase!.rpc('link_jewelry_sale_transaction', {
-        p_sale_id: insertedSale.id,
-        p_transaction_id: transactionId,
-      });
-      if (linkError) throw new Error(`Sale and ledger were saved, but their link failed: ${linkError.message}`);
     } catch (error) {
-      setMessage(`Could not save jewelry sale to Supabase: ${error instanceof Error ? error.message : 'Supabase could not be reached.'}`);
+      setMessage(`Could not submit jewelry sale for owner approval: ${error instanceof Error ? error.message : 'Supabase could not be reached.'}`);
       await refreshData();
       return;
     }
     if (!(await refreshData())) return;
     setSaleForm({ itemId: '', quantity: '1', customerName: '' });
     setActiveForm(null);
+    setMessage('Jewelry sale request sent to the owner. The sale will be completed and stock deducted after approval.');
   };
 
   const returnJewelrySale = async (sale: JewelrySaleRecord) => {
