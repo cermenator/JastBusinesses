@@ -54,6 +54,7 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<UserAccount>(DEMO_USERS[0]);
   const [selectedBusinessFilter, setSelectedBusinessFilter] = useState<BusinessId | 'ALL'>('ALL');
   const [activeTab, setActiveTab] = useState<'dashboard' | 'approvals' | 'ledger' | 'audit' | 'operations'>('dashboard');
+  const [selectedSidebarItem, setSelectedSidebarItem] = useState('dashboard');
   const [transactions, setTransactions] = useState<TransactionRecord[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
   const [persistenceError, setPersistenceError] = useState('');
@@ -395,22 +396,26 @@ export default function App() {
         </div>
         <nav className="flex-1 px-2 py-4">
           {[
-            { tab: 'dashboard' as const, label: 'Dashboard', icon: Home },
-            { tab: 'operations' as const, label: 'Business Units', icon: Layers },
-            { tab: 'ledger' as const, label: 'Transactions', icon: ReceiptText },
-            { tab: 'audit' as const, label: 'Documents', icon: FileText },
-            { tab: 'ledger' as const, label: 'Reports & Analytics', icon: BarChart3 },
-            { tab: 'audit' as const, label: 'User Accounts', icon: Users },
-            { tab: 'approvals' as const, label: 'Audit Trail', icon: ShieldCheck },
-            { tab: 'operations' as const, label: 'System Settings', icon: PlusCircle },
+            { id: 'dashboard', tab: 'dashboard' as const, label: 'Dashboard', icon: Home },
+            { id: 'business-units', tab: 'operations' as const, label: 'Business Units', icon: Layers },
+            { id: 'transactions', tab: 'ledger' as const, label: 'Transactions & Analytics', icon: ReceiptText },
+            { id: 'documents', tab: 'audit' as const, label: 'Documents', icon: FileText },
+            { id: 'reports', tab: 'ledger' as const, label: 'Reports & Analytics', icon: BarChart3 },
+            { id: 'users', tab: 'audit' as const, label: 'User Accounts', icon: Users },
+            { id: 'approvals', tab: 'approvals' as const, label: 'Approvals', icon: ShieldCheck },
+            { id: 'audit-trail', tab: 'audit' as const, label: 'Audit Trail', icon: History },
+            { id: 'settings', tab: 'operations' as const, label: 'System Settings', icon: PlusCircle },
           ].map((item) => {
             const Icon = item.icon;
             return (
               <button
-                key={item.label}
-                onClick={() => setActiveTab(item.tab)}
+                key={item.id}
+                onClick={() => {
+                  setSelectedSidebarItem(item.id);
+                  setActiveTab(item.tab);
+                }}
                 className={`mb-1 flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left text-xs transition ${
-                  activeTab === item.tab ? 'bg-[#d8a72d] text-[#073d30]' : 'text-white/80 hover:bg-white/10 hover:text-white'
+                  selectedSidebarItem === item.id ? 'bg-[#d8a72d] text-[#073d30]' : 'text-white/80 hover:bg-white/10 hover:text-white'
                 }`}
               >
                 <Icon className="h-4 w-4" />
@@ -418,6 +423,19 @@ export default function App() {
               </button>
             );
           })}
+          <button
+            type="button"
+            onClick={() => {
+              setSelectedSidebarItem('record-transaction');
+              setShowPipelineModal(true);
+            }}
+            className={`mb-1 flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left text-xs transition ${
+              selectedSidebarItem === 'record-transaction' ? 'bg-[#d8a72d] text-[#073d30]' : 'text-white/80 hover:bg-white/10 hover:text-white'
+            }`}
+          >
+            <PlusCircle className="h-4 w-4" />
+            Record Transaction
+          </button>
         </nav>
         <button onClick={() => { void handleSignOut(); }} className="mx-2 mb-5 flex items-center gap-3 rounded-md px-3 py-2.5 text-xs text-white/80 hover:bg-white/10">
           <LogOut className="h-4 w-4" /> Log Out
