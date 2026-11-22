@@ -46,6 +46,7 @@ import { OperationsDashboard } from './components/OperationsDashboard';
 import { SupabaseLogin } from './components/SupabaseLogin';
 import { LegacyDataImport } from './components/LegacyDataImport';
 import { ReportsAnalytics } from './components/ReportsAnalytics';
+import { UserAccounts } from './components/UserAccounts';
 import { isSupabaseConfigured, supabase } from './lib/supabaseClient';
 
 const downloadCsv = (filename: string, headers: Array<string | number>, rows: Array<Array<string | number>>) => {
@@ -70,7 +71,7 @@ export default function App() {
   const [accountLoading, setAccountLoading] = useState(false);
   const [currentUser, setCurrentUser] = useState<UserAccount>(DEMO_USERS[0]);
   const [selectedBusinessFilter, setSelectedBusinessFilter] = useState<BusinessId | 'ALL'>('ALL');
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'approvals' | 'ledger' | 'audit' | 'operations' | 'reports'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'approvals' | 'ledger' | 'audit' | 'operations' | 'reports' | 'users'>('dashboard');
   const [selectedSidebarItem, setSelectedSidebarItem] = useState('dashboard');
   const [transactions, setTransactions] = useState<TransactionRecord[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
@@ -590,10 +591,10 @@ export default function App() {
             { id: 'business-units', tab: 'operations' as const, label: 'Business Units', icon: Layers },
             { id: 'transactions', tab: 'ledger' as const, label: 'Transactions', icon: ReceiptText },
             { id: 'reports', tab: 'reports' as const, label: 'Reports & Analytics', icon: BarChart3 },
-            { id: 'users', tab: 'audit' as const, label: 'User Accounts', icon: Users },
+            { id: 'users', tab: 'users' as const, label: 'User Accounts', icon: Users },
             { id: 'approvals', tab: 'approvals' as const, label: 'Approvals', icon: ShieldCheck },
             { id: 'audit-trail', tab: 'audit' as const, label: 'Audit Trail', icon: History },
-          ].map((item) => {
+          ].filter((item) => item.id !== 'users' || currentUser.role === 'owner').map((item) => {
             const Icon = item.icon;
             return (
               <button
@@ -622,7 +623,9 @@ export default function App() {
           <Menu className="h-5 w-5 text-slate-700" />
           <div>
             <h1 className="text-[15px] font-extrabold leading-tight text-slate-900">
-              {activeTab === 'reports' ? 'Reports & Analytics' : 'Centralized Owner Dashboard'}
+              {activeTab === 'reports'
+                ? 'Reports & Analytics'
+                : activeTab === 'users' ? 'User Accounts' : 'Centralized Owner Dashboard'}
             </h1>
             <p className="text-[10px] text-slate-500">Integrated Multi-Business Management Web Application</p>
           </div>
@@ -1044,6 +1047,8 @@ export default function App() {
             }
           />
         )}
+
+        {activeTab === 'users' && currentUser.role === 'owner' && <UserAccounts />}
 
         {/* TAB 3: UNIFIED TRANSACTION LEDGER */}
         {activeTab === 'ledger' && (

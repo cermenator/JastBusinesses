@@ -25,7 +25,9 @@ The app does not seed sample business records; it displays the data available to
 
 Catalog records, compressed property and jewelry photos, bookings, jewelry sales, transactions, and audit history are stored in Supabase. Photo files use the private `property-images` and `jewelry-images` Storage buckets. Transaction receipts are uploaded to the private `receipt-vault` bucket and can be previewed from the ledger by users with access to that venture. Existing transactions that only saved a receipt filename have no stored file to preview; those receipts must be re-uploaded. The standalone HTML preview remains a static preview of the original dashboard; use the React app for Supabase-backed operations.
 
-Apply `supabase/schema.sql` in the configured Supabase project's SQL Editor. In Supabase Auth, invite/create each user, then add a matching `user_profiles` row using the Auth user's UUID and email. Assign the `owner` role to the owner account; database policies allow owners to modify catalogs or upload catalog photos. Add staff access rows for `real_estate`, `pickleball`, and `jewelry` in `user_business_access`. Users sign in with their Supabase email and password.
+Apply `supabase/schema.sql` in the configured Supabase project's SQL Editor. Create staff login accounts in Supabase Auth, then use the owner-only **User Accounts** screen to register each Auth UUID, role, and venture access. The screen supports bookkeepers, sales/booking staff, and branch managers; owner accounts must be provisioned separately. Users sign in with their Supabase email and password.
+
+For an existing Supabase project, apply `supabase/user_accounts.sql` before using the User Accounts screen.
 
 For an existing Supabase project, also apply `supabase/cancel_booking_rls.sql` to allow owner-only booking cancellations while retaining the booking records.
 
