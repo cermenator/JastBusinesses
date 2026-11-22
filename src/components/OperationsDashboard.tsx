@@ -270,6 +270,7 @@ export const OperationsDashboard: React.FC<Props> = ({
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(true);
   const [returningSaleId, setReturningSaleId] = useState<string | null>(null);
+  const [dismissedReturnActionIds, setDismissedReturnActionIds] = useState<Set<string>>(() => new Set());
   const [photoPreview, setPhotoPreview] = useState<{ itemId: string; photoIndex: number } | null>(null);
   const [propertyPreview, setPropertyPreview] = useState<{ propertyId: string; photoIndex: number } | null>(null);
   const [activeForm, setActiveForm] = useState<'property' | 'propertyBooking' | 'jewelry' | 'court' | 'booking' | 'sale' | null>(null);
@@ -860,15 +861,10 @@ export const OperationsDashboard: React.FC<Props> = ({
     if (!window.confirm(`Return all ${sale.quantity} item(s) from ${sale.itemName} for ${money(sale.unitPrice * sale.quantity)}?\n\nThis records a refund expense and returns the items to inventory. Complete the actual payment to the customer separately.`)) return;
 
     setReturningSaleId(sale.id);
+    setDismissedReturnActionIds((currentIds) => new Set(currentIds).add(sale.id));
     try {
       const { error } = await supabase!.rpc('return_jewelry_sale', { p_sale_id: sale.id });
       if (error) throw new Error(error.message);
-      setData((currentData) => ({
-        ...currentData,
-        sales: currentData.sales.map((currentSale) =>
-          currentSale.id === sale.id ? { ...currentSale, returned: true } : currentSale
-        ),
-      }));
       await refreshData();
       onJewelryReturn();
     } catch (error) {
@@ -1267,6 +1263,7 @@ export const OperationsDashboard: React.FC<Props> = ({
                 <div className="mt-3 divide-y divide-slate-100">
                   {data.sales.map((sale) => {
                     const eligible = !sale.returned && isJewelrySaleReturnEligible(sale.soldAt);
+                    const returnActionDismissed = dismissedReturnActionIds.has(sale.id);
                     return (
                       <div key={sale.id} className="flex flex-wrap items-center justify-between gap-3 py-2 text-xs">
                         <div>
@@ -1274,13 +1271,14 @@ export const OperationsDashboard: React.FC<Props> = ({
                             {sale.itemName} × {sale.quantity} • {money(sale.unitPrice * sale.quantity)}
                           </span>
                           {sale.returned && <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600">Returned / refunded</span>}
+                          {!sale.returned && returnActionDismissed && <span className="ml-2 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800">Return action dismissed</span>}
                           {!sale.returned && !eligible && <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600">Return window expired</span>}
-                          {isOwner && !sale.returned && eligible && (
+                          {isOwner && !sale.returned && eligible && !returnActionDismissed && (
                             <p className="mt-1 text-[10px] text-slate-500">Return/refund by {jewelryReturnDeadline(sale.soldAt)} · full sale only</p>
                           )}
                           <p className="mt-1 text-slate-500">{sale.customerName} • {new Date(sale.soldAt).toLocaleString()} • {sale.processedBy}</p>
                         </div>
-                        {isOwner && !sale.returned && eligible && (
+                        {isOwner && !sale.returned && eligible && !returnActionDismissed && (
                           <button
                             type="button"
                             onClick={() => { void returnJewelrySale(sale); }}
