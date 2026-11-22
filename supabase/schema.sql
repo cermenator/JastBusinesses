@@ -57,7 +57,6 @@ AS $$
         FROM public.user_profiles up
         WHERE up.id = auth.uid()
           AND up.role = 'owner'
-          AND up.full_name = 'Ma''am Jasmin Taurak'
     );
 $$;
 
