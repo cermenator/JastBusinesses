@@ -44,6 +44,7 @@ import { SixStepPipelineModal } from './components/SixStepPipelineModal';
 import { OperationsDashboard } from './components/OperationsDashboard';
 import { SupabaseLogin } from './components/SupabaseLogin';
 import { LegacyDataImport } from './components/LegacyDataImport';
+import { ReportsAnalytics } from './components/ReportsAnalytics';
 import { isSupabaseConfigured, supabase } from './lib/supabaseClient';
 
 export default function App() {
@@ -53,7 +54,7 @@ export default function App() {
   const [accountLoading, setAccountLoading] = useState(false);
   const [currentUser, setCurrentUser] = useState<UserAccount>(DEMO_USERS[0]);
   const [selectedBusinessFilter, setSelectedBusinessFilter] = useState<BusinessId | 'ALL'>('ALL');
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'approvals' | 'ledger' | 'audit' | 'operations'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'approvals' | 'ledger' | 'audit' | 'operations' | 'reports'>('dashboard');
   const [selectedSidebarItem, setSelectedSidebarItem] = useState('dashboard');
   const [transactions, setTransactions] = useState<TransactionRecord[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
@@ -400,7 +401,7 @@ export default function App() {
             { id: 'business-units', tab: 'operations' as const, label: 'Business Units', icon: Layers },
             { id: 'transactions', tab: 'ledger' as const, label: 'Transactions & Analytics', icon: ReceiptText },
             { id: 'documents', tab: 'audit' as const, label: 'Documents', icon: FileText },
-            { id: 'reports', tab: 'ledger' as const, label: 'Reports & Analytics', icon: BarChart3 },
+            { id: 'reports', tab: 'reports' as const, label: 'Reports & Analytics', icon: BarChart3 },
             { id: 'users', tab: 'audit' as const, label: 'User Accounts', icon: Users },
             { id: 'approvals', tab: 'approvals' as const, label: 'Approvals', icon: ShieldCheck },
             { id: 'audit-trail', tab: 'audit' as const, label: 'Audit Trail', icon: History },
@@ -432,7 +433,9 @@ export default function App() {
         <div className="flex items-center gap-3">
           <Menu className="h-5 w-5 text-slate-700" />
           <div>
-            <h1 className="text-[15px] font-extrabold leading-tight text-slate-900">Centralized Owner Dashboard</h1>
+            <h1 className="text-[15px] font-extrabold leading-tight text-slate-900">
+              {activeTab === 'reports' ? 'Reports & Analytics' : 'Centralized Owner Dashboard'}
+            </h1>
             <p className="text-[10px] text-slate-500">Integrated Multi-Business Management Web Application</p>
           </div>
         </div>
@@ -836,6 +839,18 @@ export default function App() {
               </div>
             )}
           </div>
+        )}
+
+        {activeTab === 'reports' && (
+          <ReportsAnalytics
+            transactions={currentUser.role === 'owner' ? transactions : rlsVisibleTransactions}
+            initialBusiness={currentUser.role === 'owner' ? 'ALL' : currentUser.businessId || currentUser.businessIds?.[0] || 'ALL'}
+            allowedBusinessIds={
+              currentUser.role === 'owner'
+                ? BUSINESS_UNITS.map((unit) => unit.id)
+                : currentUser.businessIds || (currentUser.businessId ? [currentUser.businessId] : [])
+            }
+          />
         )}
 
         {/* TAB 3: UNIFIED TRANSACTION LEDGER */}
