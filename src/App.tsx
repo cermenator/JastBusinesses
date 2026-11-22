@@ -618,7 +618,7 @@ export default function App() {
         </button>
       </aside>
       <div className="min-w-0 flex-1">
-      <header className="sticky top-0 z-30 flex h-[62px] items-center justify-between border-b border-slate-200 bg-white px-4 shadow-[0_1px_4px_rgba(15,23,42,.06)] sm:px-6">
+      <header className="app-header sticky top-0 z-30 flex h-[62px] items-center justify-between border-b border-slate-200 bg-white px-4 shadow-[0_1px_4px_rgba(15,23,42,.06)] sm:px-6">
         <div className="flex items-center gap-3">
           <Menu className="h-5 w-5 text-slate-700" />
           <div>
@@ -794,24 +794,26 @@ export default function App() {
       {/* Main Content Container */}
       <main className="mx-auto max-w-[1440px] px-4 py-4 sm:px-5 space-y-4">
         {persistenceError && (
-          <div role="alert" className="rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+          <div role="alert" className="no-print rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-800">
             {persistenceError}
           </div>
         )}
-        {ledgerLoading && <p role="status" className="text-sm text-slate-500">Loading transactions and audit history from Supabase...</p>}
+        {ledgerLoading && <p role="status" className="no-print text-sm text-slate-500">Loading transactions and audit history from Supabase...</p>}
         {currentUser.role === 'owner' && (
-          <LegacyDataImport
-            userId={currentUser.id}
-            userName={currentUser.name}
-            onComplete={() => {
-              void loadLedger();
-              setOperationsRefreshKey((key) => key + 1);
-            }}
-          />
+          <div className="no-print">
+            <LegacyDataImport
+              userId={currentUser.id}
+              userName={currentUser.name}
+              onComplete={() => {
+                void loadLedger();
+                setOperationsRefreshKey((key) => key + 1);
+              }}
+            />
+          </div>
         )}
         {/* RLS Isolation Notice for Branch Staff */}
         {currentUser.role !== 'owner' && (
-          <div className="flex items-center justify-between rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-xs text-indigo-950">
+          <div className="no-print flex items-center justify-between rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-xs text-indigo-950">
             <div className="flex items-center gap-2.5">
               <Lock className="h-4 w-4 text-indigo-600 shrink-0" />
               <span>

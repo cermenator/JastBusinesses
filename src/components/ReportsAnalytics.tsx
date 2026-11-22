@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { ArrowDownRight, ArrowUpRight, BarChart3, CalendarDays, Lightbulb, TrendingUp } from 'lucide-react';
+import { ArrowDownRight, ArrowUpRight, BarChart3, CalendarDays, Lightbulb, Printer, TrendingUp } from 'lucide-react';
 import { BUSINESS_UNITS } from '../lib/seedData';
 import { BusinessId, TransactionRecord } from '../types/erp';
 
@@ -22,6 +22,7 @@ const COLORS: Record<BusinessId, string> = {
 };
 
 const money = (amount: number) => `${amount < 0 ? '-₱' : '₱'}${Math.abs(amount).toLocaleString('en-PH', { maximumFractionDigits: 0 })}`;
+const exactMoney = (amount: number) => `${amount < 0 ? '-₱' : '₱'}${Math.abs(amount).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const monthKey = (date: Date) => `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
 const dayKey = (date: Date) => date.toISOString().slice(0, 10);
 
@@ -97,31 +98,65 @@ function Legend({ series }: { series: ChartSeries[] }) {
 }
 
 export const ReportsAnalytics: React.FC<Props> = ({ transactions, initialBusiness, allowedBusinessIds }) => {
+  const todayKey = dayKey(new Date());
+  const currentMonthKey = todayKey.slice(0, 7);
+  const currentYear = todayKey.slice(0, 4);
   const [businessScope, setBusinessScope] = useState<BusinessId | 'ALL'>(
     initialBusiness === 'ALL' && allowedBusinessIds.length === 1 ? allowedBusinessIds[0] : initialBusiness
   );
+  const [periodMode, setPeriodMode] = useState<'monthly' | 'yearly' | 'custom'>('monthly');
+  const [selectedMonth, setSelectedMonth] = useState(currentMonthKey);
+  const [selectedYear, setSelectedYear] = useState(currentYear);
+  const [customStartDate, setCustomStartDate] = useState(`${currentYear}-01-01`);
+  const [customEndDate, setCustomEndDate] = useState(todayKey);
   const businessOptions = BUSINESS_UNITS.filter((unit) => allowedBusinessIds.includes(unit.id));
   const filteredTransactions = useMemo(
     () => transactions.filter((tx) => businessScope === 'ALL' || tx.businessId === businessScope),
     [transactions, businessScope]
   );
+  const periodStart = periodMode === 'monthly'
+    ? selectedMonth ? `${selectedMonth}-01` : ''
+    : periodMode === 'yearly' ? `${selectedYear}-01-01` : customStartDate;
+  const periodEnd = periodMode === 'monthly' && selectedMonth
+    ? (() => {
+      const [year, month] = selectedMonth.split('-').map(Number);
+      return dayKey(new Date(Date.UTC(year, month, 0)));
+    })()
+    : periodMode === 'yearly' ? `${selectedYear}-12-31` : customEndDate;
+  const dateRangeError = !periodStart || !periodEnd || periodStart > periodEnd;
+  const periodTransactions = useMemo(
+    () => dateRangeError ? [] : filteredTransactions
+      .filter((tx) => tx.txDate >= periodStart && tx.txDate <= periodEnd)
+      .slice()
+      .sort((a, b) => b.txDate.localeCompare(a.txDate) || b.createdAt.localeCompare(a.createdAt)),
+    [filteredTransactions, dateRangeError, periodStart, periodEnd]
+  );
   const reportTransactions = useMemo(
-    () => filteredTransactions.filter((tx) => tx.status === 'APPROVED' || tx.status === 'CANCELLED'),
-    [filteredTransactions]
+    () => periodTransactions.filter((tx) => tx.status === 'APPROVED' || tx.status === 'CANCELLED'),
+    [periodTransactions]
   );
   const refundTransactions = reportTransactions.filter(
     (tx) => tx.status === 'APPROVED' && tx.category === 'Jewelry Sales Return / Refund'
   );
   const isRefund = (tx: TransactionRecord) => tx.category === 'Jewelry Sales Return / Refund';
-  const now = new Date();
-  const dailyLabels = useMemo(() => Array.from({ length: 30 }, (_, index) => {
-    const date = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - 29 + index));
+  const dayCount = dateRangeError
+    ? 0
+    : Math.floor((Date.parse(`${periodEnd}T00:00:00Z`) - Date.parse(`${periodStart}T00:00:00Z`)) / 86400000) + 1;
+  const showDailyTrends = dayCount > 0 && dayCount <= 31;
+  const dailyLabels = useMemo(() => Array.from({ length: showDailyTrends ? dayCount : 0 }, (_, index) => {
+    const date = new Date(Date.parse(`${periodStart}T00:00:00Z`) + index * 86400000);
     return { key: dayKey(date), label: `${date.getUTCDate()} ${date.toLocaleString('en', { month: 'short', timeZone: 'UTC' })}` };
-  }), []);
-  const monthlyLabels = useMemo(() => Array.from({ length: 12 }, (_, index) => {
-    const date = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 11 + index, 1));
-    return { key: monthKey(date), label: date.toLocaleString('en', { month: 'short', year: '2-digit', timeZone: 'UTC' }) };
-  }), []);
+  }), [showDailyTrends, dayCount, periodStart]);
+  const monthlyLabels = useMemo(() => {
+    if (dateRangeError) return [];
+    const [startYear, startMonth] = periodStart.slice(0, 7).split('-').map(Number);
+    const [endYear, endMonth] = periodEnd.slice(0, 7).split('-').map(Number);
+    const monthCount = (endYear - startYear) * 12 + endMonth - startMonth + 1;
+    return Array.from({ length: monthCount }, (_, index) => {
+      const date = new Date(Date.UTC(startYear, startMonth - 1 + index, 1));
+      return { key: monthKey(date), label: date.toLocaleString('en', { month: 'short', year: '2-digit', timeZone: 'UTC' }) };
+    });
+  }, [dateRangeError, periodStart, periodEnd]);
   const scopeBusinesses = businessScope === 'ALL'
     ? businessOptions
     : businessOptions.filter((unit) => unit.id === businessScope);
@@ -173,12 +208,13 @@ export const ReportsAnalytics: React.FC<Props> = ({ transactions, initialBusines
     else if (tx.status === 'APPROVED' && isRefund(tx)) totals[tx.category] = (totals[tx.category] || 0) - tx.amount;
     return totals;
   }, {})).sort((a, b) => b[1] - a[1]).slice(0, 6);
-  const selectedMonthlyRevenue = monthlyLabels.slice(0, -1).map(({ key }) =>
+  const completedMonths = monthlyLabels.filter(({ key }) => key < currentMonthKey);
+  const selectedMonthlyRevenue = completedMonths.map(({ key }) =>
     reportTransactions
       .filter((tx) => tx.txDate.slice(0, 7) === key)
       .reduce((sum, tx) => sum + (tx.txType === 'INCOME' ? tx.amount : isRefund(tx) ? -tx.amount : 0), 0)
   );
-  const completedMonthsWithRevenue = monthlyLabels.slice(0, -1).filter(({ key }) =>
+  const completedMonthsWithRevenue = completedMonths.filter(({ key }) =>
     reportTransactions.some((tx) => (tx.txType === 'INCOME' || isRefund(tx)) && tx.txDate.slice(0, 7) === key)
   ).length;
   const forecast = useMemo(() => {
@@ -194,7 +230,6 @@ export const ReportsAnalytics: React.FC<Props> = ({ transactions, initialBusines
     return [1, 2, 3].map((step) => Math.max(0, meanY + slope * (n - 1 + step)));
   }, [completedMonthsWithRevenue, selectedMonthlyRevenue]);
   const maxCategoryRevenue = Math.max(1, ...categoryRevenue.map(([, amount]) => Math.abs(amount)));
-  const completedMonths = monthlyLabels.slice(0, -1);
   const lowestRevenueMonth = completedMonths
     .map((month, index) => ({
       ...month,
@@ -209,26 +244,114 @@ export const ReportsAnalytics: React.FC<Props> = ({ transactions, initialBusines
   const scopeLabel = businessScope === 'ALL'
     ? 'All authorized businesses'
     : businessOptions.find((unit) => unit.id === businessScope)?.name || 'Selected business';
+  const availableYears = Array.from(new Set([
+    currentYear,
+    ...transactions.map((tx) => tx.txDate.slice(0, 4)),
+  ])).sort((a, b) => b.localeCompare(a));
+  const periodLabel = periodMode === 'monthly' && selectedMonth
+    ? new Date(`${selectedMonth}-01T00:00:00Z`).toLocaleDateString('en-PH', { month: 'long', year: 'numeric', timeZone: 'UTC' })
+    : periodMode === 'yearly'
+      ? selectedYear
+      : `${customStartDate} to ${customEndDate}`;
 
   return (
-    <div className="space-y-5">
+    <div className="reports-print space-y-5">
+      <div className="print-only">
+        <h1 className="text-xl font-bold">JAST Business Ventures — Financial Report</h1>
+        <p className="text-sm">{scopeLabel} · {periodLabel}</p>
+      </div>
       <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
         <div>
           <h2 className="text-xl font-bold text-slate-900">Reports & Analytics</h2>
-          <p className="mt-1 text-xs text-slate-500">Historical performance with completed jewelry returns deducted from revenue.</p>
+          <p className="mt-1 text-xs text-slate-500">
+            {scopeLabel} · {periodLabel}. Financial summaries include approved and cancelled entries; detailed records list every status.
+          </p>
         </div>
-        <label className="flex items-center gap-2 text-xs font-semibold text-slate-600">
-          Business scope
-          <select
-            value={businessScope}
-            onChange={(event) => setBusinessScope(event.target.value as BusinessId | 'ALL')}
-            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800"
+        <div className="no-print flex flex-wrap items-end gap-3">
+          <label className="flex flex-col gap-1 text-xs font-semibold text-slate-600">
+            Business scope
+            <select
+              value={businessScope}
+              onChange={(event) => setBusinessScope(event.target.value as BusinessId | 'ALL')}
+              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800"
+            >
+              {businessOptions.length > 1 && <option value="ALL">All authorized businesses</option>}
+              {businessOptions.map((unit) => <option key={unit.id} value={unit.id}>{unit.name}</option>)}
+            </select>
+          </label>
+          <label className="flex flex-col gap-1 text-xs font-semibold text-slate-600">
+            Report period
+            <select
+              value={periodMode}
+              onChange={(event) => setPeriodMode(event.target.value as 'monthly' | 'yearly' | 'custom')}
+              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800"
+            >
+              <option value="monthly">Monthly</option>
+              <option value="yearly">Yearly</option>
+              <option value="custom">Custom date range</option>
+            </select>
+          </label>
+          {periodMode === 'monthly' && (
+            <label className="flex flex-col gap-1 text-xs font-semibold text-slate-600">
+              Month
+              <input
+                type="month"
+                value={selectedMonth}
+                onChange={(event) => setSelectedMonth(event.target.value)}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800"
+              />
+            </label>
+          )}
+          {periodMode === 'yearly' && (
+            <label className="flex flex-col gap-1 text-xs font-semibold text-slate-600">
+              Year
+              <select
+                value={selectedYear}
+                onChange={(event) => setSelectedYear(event.target.value)}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800"
+              >
+                {availableYears.map((year) => <option key={year} value={year}>{year}</option>)}
+              </select>
+            </label>
+          )}
+          {periodMode === 'custom' && (
+            <>
+              <label className="flex flex-col gap-1 text-xs font-semibold text-slate-600">
+                From
+                <input
+                  type="date"
+                  value={customStartDate}
+                  onChange={(event) => setCustomStartDate(event.target.value)}
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800"
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-xs font-semibold text-slate-600">
+                To
+                <input
+                  type="date"
+                  value={customEndDate}
+                  onChange={(event) => setCustomEndDate(event.target.value)}
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800"
+                />
+              </label>
+            </>
+          )}
+          <button
+            type="button"
+            onClick={() => window.print()}
+            disabled={dateRangeError}
+            className="inline-flex items-center gap-2 rounded-lg bg-[#075b43] px-4 py-2 text-sm font-semibold text-white hover:bg-[#064a37] disabled:opacity-50"
           >
-            {businessOptions.length > 1 && <option value="ALL">All authorized businesses</option>}
-            {businessOptions.map((unit) => <option key={unit.id} value={unit.id}>{unit.name}</option>)}
-          </select>
-        </label>
+            <Printer className="h-4 w-4" /> Print report
+          </button>
+        </div>
       </div>
+
+      {dateRangeError && (
+        <p role="alert" className="no-print rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+          Choose a valid report period. The start date must be on or before the end date.
+        </p>
+      )}
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {[
@@ -250,8 +373,8 @@ export const ReportsAnalytics: React.FC<Props> = ({ transactions, initialBusines
       {reportTransactions.length === 0 ? (
         <div className="rounded-xl border border-dashed border-slate-300 bg-white p-10 text-center">
           <BarChart3 className="mx-auto h-8 w-8 text-slate-400" />
-          <h3 className="mt-3 font-semibold text-slate-800">No approved transactions in this scope yet</h3>
-          <p className="mt-1 text-sm text-slate-500">Charts will populate as approved transactions are added to the ledger.</p>
+          <h3 className="mt-3 font-semibold text-slate-800">No approved or cancelled financial transactions in this period</h3>
+          <p className="mt-1 text-sm text-slate-500">The detailed transaction table below includes every status.</p>
         </div>
       ) : (
         <>
@@ -259,7 +382,7 @@ export const ReportsAnalytics: React.FC<Props> = ({ transactions, initialBusines
             <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
               <div className="mb-3">
                 <h3 className="text-sm font-bold text-slate-800">Monthly revenue trend</h3>
-                <p className="text-[11px] text-slate-500">Last 12 calendar months (current month to date) · {scopeLabel}</p>
+                <p className="text-[11px] text-slate-500">{periodLabel} · {scopeLabel}</p>
               </div>
               <LineChart labels={monthlyLabels.map((month) => month.label)} series={monthlyRevenueSeries} />
               <Legend series={monthlyRevenueSeries} />
@@ -267,31 +390,35 @@ export const ReportsAnalytics: React.FC<Props> = ({ transactions, initialBusines
             <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
               <div className="mb-3">
                 <h3 className="text-sm font-bold text-slate-800">Monthly expense trend</h3>
-                <p className="text-[11px] text-slate-500">Approved outflows · last 12 months</p>
+                <p className="text-[11px] text-slate-500">Approved outflows · {periodLabel}</p>
               </div>
               <LineChart labels={monthlyLabels.map((month) => month.label)} series={monthlyExpenseSeries} />
               <Legend series={monthlyExpenseSeries} />
             </article>
-            <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-              <div className="mb-3">
-                <h3 className="text-sm font-bold text-slate-800">Daily revenue trend</h3>
-                <p className="text-[11px] text-slate-500">Last 30 days · {scopeLabel}</p>
-              </div>
-              <LineChart labels={dailyLabels.map((day) => day.label)} series={dailyRevenueSeries} />
-              <Legend series={dailyRevenueSeries} />
-            </article>
-            <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-              <div className="mb-3">
-                <h3 className="text-sm font-bold text-slate-800">Daily transaction volume</h3>
-                <p className="text-[11px] text-slate-500">Approved ledger entries · last 30 days</p>
-              </div>
-              <LineChart labels={dailyLabels.map((day) => day.label)} series={dailyTransactionSeries} currency={false} />
-              <Legend series={dailyTransactionSeries} />
-            </article>
+            {showDailyTrends && (
+              <>
+                <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                  <div className="mb-3">
+                    <h3 className="text-sm font-bold text-slate-800">Daily revenue trend</h3>
+                    <p className="text-[11px] text-slate-500">{periodLabel} · {scopeLabel}</p>
+                  </div>
+                  <LineChart labels={dailyLabels.map((day) => day.label)} series={dailyRevenueSeries} />
+                  <Legend series={dailyRevenueSeries} />
+                </article>
+                <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                  <div className="mb-3">
+                    <h3 className="text-sm font-bold text-slate-800">Daily transaction volume</h3>
+                    <p className="text-[11px] text-slate-500">Approved ledger entries · {periodLabel}</p>
+                  </div>
+                  <LineChart labels={dailyLabels.map((day) => day.label)} series={dailyTransactionSeries} currency={false} />
+                  <Legend series={dailyTransactionSeries} />
+                </article>
+              </>
+            )}
             <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
               <div className="mb-3">
                 <h3 className="text-sm font-bold text-slate-800">Monthly transaction volume</h3>
-                <p className="text-[11px] text-slate-500">Approved ledger entries · last 12 months</p>
+                <p className="text-[11px] text-slate-500">Approved ledger entries · {periodLabel}</p>
               </div>
               <LineChart labels={monthlyLabels.map((month) => month.label)} series={monthlyTransactionSeries} currency={false} />
               <Legend series={monthlyTransactionSeries} />
@@ -304,7 +431,7 @@ export const ReportsAnalytics: React.FC<Props> = ({ transactions, initialBusines
                 <CalendarDays className="h-4 w-4 text-[#075b43]" />
                 <div>
                   <h3 className="text-sm font-bold text-slate-800">Revenue by category</h3>
-                  <p className="text-[11px] text-slate-500">Net income after completed jewelry returns · {scopeLabel}</p>
+                  <p className="text-[11px] text-slate-500">Net income after completed jewelry returns · {periodLabel}</p>
                 </div>
               </div>
               {categoryRevenue.length ? (
@@ -360,6 +487,64 @@ export const ReportsAnalytics: React.FC<Props> = ({ transactions, initialBusines
           </section>
         </>
       )}
+
+      <section className="print-transactions overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+        <div className="border-b border-slate-200 px-4 py-3">
+          <h3 className="text-sm font-bold text-slate-900">Detailed Transaction Records</h3>
+          <p className="mt-1 text-[11px] text-slate-500">
+            {periodTransactions.length} transactions · {periodStart || '—'} to {periodEnd || '—'} · all statuses
+          </p>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-[11px]">
+            <thead className="border-b border-slate-200 bg-slate-50 text-slate-600">
+              <tr>
+                <th className="px-3 py-2">Date</th>
+                <th className="px-3 py-2">Reference</th>
+                <th className="px-3 py-2">Venture</th>
+                <th className="px-3 py-2">Type / Category</th>
+                <th className="px-3 py-2">Counterparty / Details</th>
+                <th className="px-3 py-2 text-right">Amount</th>
+                <th className="px-3 py-2 text-right">VAT</th>
+                <th className="px-3 py-2">Status</th>
+                <th className="px-3 py-2">Submitted By</th>
+                <th className="px-3 py-2">Receipt</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-200">
+              {periodTransactions.length ? periodTransactions.map((transaction) => (
+                <tr key={transaction.id}>
+                  <td className="whitespace-nowrap px-3 py-2">{transaction.txDate}</td>
+                  <td className="px-3 py-2 font-mono font-semibold">{transaction.referenceNo}</td>
+                  <td className="px-3 py-2">{BUSINESS_UNITS.find((unit) => unit.id === transaction.businessId)?.code}</td>
+                  <td className="px-3 py-2">
+                    <p className="font-semibold">{transaction.txType}</p>
+                    <p className="text-slate-500">{transaction.category}</p>
+                  </td>
+                  <td className="min-w-48 px-3 py-2">
+                    <p className="font-semibold">{transaction.counterpartyName}</p>
+                    <p className="text-slate-500">{transaction.description}</p>
+                    {transaction.counterpartyTin && <p className="text-slate-500">TIN: {transaction.counterpartyTin}</p>}
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-2 text-right font-semibold">
+                    {transaction.txType === 'INCOME' ? '+' : '-'}{exactMoney(transaction.amount)}
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-2 text-right">{exactMoney(transaction.vatAmount)}</td>
+                  <td className="px-3 py-2">{transaction.status}</td>
+                  <td className="px-3 py-2">{transaction.submittedBy}</td>
+                  <td className="px-3 py-2">{transaction.receiptFilename || '—'}</td>
+                </tr>
+              )) : (
+                <tr>
+                  <td colSpan={10} className="px-3 py-8 text-center text-slate-500">
+                    {dateRangeError ? 'Select a valid date range to view transactions.' : 'No transactions in this period.'}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
     </div>
   );
 };
