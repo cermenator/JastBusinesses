@@ -27,6 +27,25 @@ const STEPS = [
   { num: 6, label: 'Generate' },
 ];
 
+const CATEGORIES_BY_BUSINESS: Record<BusinessId, { value: string; label: string }[]> = {
+  real_estate: [
+    { value: 'Property Reservation & Downpayment', label: 'Property Reservation & Downpayment' },
+    { value: 'Facility Maintenance & Utilities', label: 'Facility Maintenance & Utilities' },
+    { value: 'Operational Revenue', label: 'General Operational Revenue' },
+  ],
+  pickleball: [
+    { value: 'Court Rental & Open Play', label: 'Court Rental & Open Play' },
+    { value: 'Facility Maintenance & Utilities', label: 'Facility Maintenance & Utilities' },
+    { value: 'Operational Revenue', label: 'General Operational Revenue' },
+  ],
+  jewelry: [
+    { value: 'Bespoke Diamond & Gold Sales', label: 'Bespoke Diamond & Gold Sales' },
+    { value: 'Vault Smelting / Stone Recalibration', label: 'Vault Smelting / Stone Recalibration' },
+    { value: 'Facility Maintenance & Utilities', label: 'Facility Maintenance & Utilities' },
+    { value: 'Operational Revenue', label: 'General Operational Revenue' },
+  ],
+};
+
 export const SixStepPipelineModal: React.FC<Props> = ({
   currentUser,
   onClose,
@@ -42,7 +61,9 @@ export const SixStepPipelineModal: React.FC<Props> = ({
   const [amount, setAmount] = useState('');
   const [txDate, setTxDate] = useState(new Date().toISOString().slice(0, 10));
   const [receiptFilename, setReceiptFilename] = useState('');
-  const [category, setCategory] = useState('Operational Revenue');
+  const [category, setCategory] = useState(
+    CATEGORIES_BY_BUSINESS[currentUser.businessId || currentUser.businessIds?.[0] || 'real_estate'][0].value
+  );
   const [description, setDescription] = useState('');
   const [reconciled, setReconciled] = useState(true);
   const [submissionError, setSubmissionError] = useState('');
@@ -54,6 +75,7 @@ export const SixStepPipelineModal: React.FC<Props> = ({
   const visibleBusinessUnits = allowedBusinesses
     ? BUSINESS_UNITS.filter((business) => allowedBusinesses.includes(business.id))
     : BUSINESS_UNITS;
+  const availableCategories = CATEGORIES_BY_BUSINESS[businessId];
   const unit = BUSINESS_UNITS.find((b) => b.id === businessId)!;
 
   // Owner Gate Logic matching PostgreSQL trigger
@@ -151,7 +173,11 @@ export const SixStepPipelineModal: React.FC<Props> = ({
                   <select
                     value={businessId}
                     disabled={allowedBusinesses !== null && allowedBusinesses.length === 1}
-                    onChange={(e) => setBusinessId(e.target.value as BusinessId)}
+                    onChange={(e) => {
+                      const nextBusinessId = e.target.value as BusinessId;
+                      setBusinessId(nextBusinessId);
+                      setCategory(CATEGORIES_BY_BUSINESS[nextBusinessId][0].value);
+                    }}
                     className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm bg-white disabled:bg-slate-100"
                   >
                     {visibleBusinessUnits.map((b) => (
@@ -252,12 +278,9 @@ export const SixStepPipelineModal: React.FC<Props> = ({
                   onChange={(e) => setCategory(e.target.value)}
                   className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm bg-white"
                 >
-                  <option value="Property Reservation & Downpayment">Property Reservation & Downpayment</option>
-                  <option value="Court Rental & Open Play">Court Rental & Open Play</option>
-                  <option value="Bespoke Diamond & Gold Sales">Bespoke Diamond & Gold Sales</option>
-                  <option value="Facility Maintenance & Utilities">Facility Maintenance & Utilities</option>
-                  <option value="Vault Smelting / Stone Recalibration">Vault Smelting / Stone Recalibration</option>
-                  <option value="Operational Revenue">General Operational Revenue</option>
+                  {availableCategories.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
                 </select>
               </div>
               <div>
