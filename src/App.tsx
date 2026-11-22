@@ -33,6 +33,7 @@ import { Session } from '@supabase/supabase-js';
 import {
   AuditLogEntry,
   BusinessId,
+  NewTransactionRecord,
   TransactionRecord,
   UserAccount,
 } from './types/erp';
@@ -77,6 +78,9 @@ export default function App() {
   const [ledgerLoading, setLedgerLoading] = useState(false);
   const [showPipelineModal, setShowPipelineModal] = useState(false);
   const [operationsRefreshKey, setOperationsRefreshKey] = useState(0);
+  const [receiptPreview, setReceiptPreview] = useState<{ url: string; filename: string } | null>(null);
+  const [receiptViewError, setReceiptViewError] = useState('');
+  const [openingReceiptId, setOpeningReceiptId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!supabase) {
@@ -181,27 +185,32 @@ export default function App() {
       if (transactionResult.error) throw new Error(`Could not load transactions: ${transactionResult.error.message}`);
       if (auditResult.error) throw new Error(`Could not load audit history: ${auditResult.error.message}`);
 
-      setTransactions(transactionResult.data.map((row) => ({
-        id: row.id,
-        referenceNo: row.reference_no,
-        businessId: row.business_id as BusinessId,
-        txType: row.tx_type as TransactionRecord['txType'],
-        category: row.category,
-        counterpartyTin: row.counterparty_tin || undefined,
-        counterpartyName: row.counterparty_name,
-        description: row.description,
-        amount: Number(row.amount),
-        vatAmount: Number(row.vat_amount),
-        receiptFilename: row.receipt_filename || undefined,
-        receiptDataUrl: row.receipt_url || undefined,
-        reconciled: row.reconciled,
-        status: row.status as TransactionRecord['status'],
-        gateReason: row.gate_reason || '',
-        submittedBy: row.submitted_by_name,
-        approvedBy: row.approved_by || undefined,
-        txDate: row.tx_date,
-        createdAt: row.created_at,
-      })));
+      setTransactions(transactionResult.data.map((row) => {
+        const receiptUrl = row.receipt_url || '';
+        const isReceiptStoragePath = receiptUrl !== '' && !/^(data:|https?:\/\/)/i.test(receiptUrl);
+        return {
+          id: row.id,
+          referenceNo: row.reference_no,
+          businessId: row.business_id as BusinessId,
+          txType: row.tx_type as TransactionRecord['txType'],
+          category: row.category,
+          counterpartyTin: row.counterparty_tin || undefined,
+          counterpartyName: row.counterparty_name,
+          description: row.description,
+          amount: Number(row.amount),
+          vatAmount: Number(row.vat_amount),
+          receiptFilename: row.receipt_filename || undefined,
+          receiptDataUrl: !isReceiptStoragePath ? receiptUrl || undefined : undefined,
+          receiptStoragePath: isReceiptStoragePath ? receiptUrl : undefined,
+          reconciled: row.reconciled,
+          status: row.status as TransactionRecord['status'],
+          gateReason: row.gate_reason || '',
+          submittedBy: row.submitted_by_name,
+          approvedBy: row.approved_by || undefined,
+          txDate: row.tx_date,
+          createdAt: row.created_at,
+        };
+      }));
       setAuditLogs(auditResult.data.map((row) => ({
         id: Number(row.id),
         transactionId: row.transaction_id,
@@ -315,13 +324,31 @@ export default function App() {
   }, [rlsVisibleTransactions]);
 
   const handleAddTransactionWithId = async (
-    newTx: Omit<TransactionRecord, 'id' | 'createdAt'>
+    newTx: NewTransactionRecord
   ): Promise<string | null> => {
     if (!supabase || !session) {
       setPersistenceError('You must be signed in to save transactions to Supabase.');
       return null;
     }
     try {
+      let receiptStoragePath = newTx.receiptStoragePath;
+      if (newTx.receiptFile) {
+        const safeFilename = newTx.receiptFile.name.replace(/[^\w.-]+/g, '_');
+        const storagePath = `${newTx.businessId}/${session.user.id}/${crypto.randomUUID()}-${safeFilename}`;
+        const extension = newTx.receiptFile.name.split('.').pop()?.toLowerCase();
+        const contentType = newTx.receiptFile.type || (
+          extension === 'pdf' ? 'application/pdf' :
+          extension === 'jpg' || extension === 'jpeg' ? 'image/jpeg' :
+          extension === 'png' ? 'image/png' : ''
+        );
+        if (!contentType) throw new Error('The receipt file type is unsupported.');
+        const { error: uploadError } = await supabase.storage
+          .from('receipt-vault')
+          .upload(storagePath, newTx.receiptFile, { contentType, upsert: false });
+        if (uploadError) throw new Error(`Could not upload receipt: ${uploadError.message}`);
+        receiptStoragePath = storagePath;
+      }
+
       const { data, error } = await supabase.from('transactions').insert({
         reference_no: newTx.referenceNo,
         business_id: newTx.businessId,
@@ -332,7 +359,7 @@ export default function App() {
         description: newTx.description,
         amount: newTx.amount,
         vat_amount: newTx.vatAmount,
-        receipt_url: newTx.receiptDataUrl || null,
+        receipt_url: receiptStoragePath || newTx.receiptDataUrl || null,
         receipt_filename: newTx.receiptFilename || null,
         reconciled: newTx.reconciled,
         status: newTx.status,
@@ -341,8 +368,16 @@ export default function App() {
         submitted_by_name: currentUser.name,
         tx_date: newTx.txDate,
       }).select('id').single();
-      if (error) throw new Error(error.message);
-      if (!data) throw new Error('Supabase did not return the saved transaction.');
+      if (error || !data) {
+        const saveError = error?.message || 'Supabase did not return the saved transaction.';
+        if (receiptStoragePath && newTx.receiptFile) {
+          const { error: cleanupError } = await supabase.storage.from('receipt-vault').remove([receiptStoragePath]);
+          if (cleanupError) {
+            throw new Error(`${saveError} Receipt cleanup also failed: ${cleanupError.message}`);
+          }
+        }
+        throw new Error(saveError);
+      }
       return data.id;
     } catch (error) {
       setPersistenceError(`Could not save transaction to Supabase: ${error instanceof Error ? error.message : 'Supabase could not be reached.'}`);
@@ -351,11 +386,34 @@ export default function App() {
   };
 
   const handleAddTransaction = async (
-    newTx: Omit<TransactionRecord, 'id' | 'createdAt'>
+    newTx: NewTransactionRecord
   ): Promise<boolean> => {
     const transactionId = await handleAddTransactionWithId(newTx);
     if (!transactionId) return false;
     return loadLedger();
+  };
+
+  const handleViewReceipt = async (transaction: TransactionRecord) => {
+    setReceiptViewError('');
+    setOpeningReceiptId(transaction.id);
+    try {
+      let url = transaction.receiptDataUrl;
+      if (!url && transaction.receiptStoragePath) {
+        if (!supabase) throw new Error('Supabase is not configured.');
+        const { data, error } = await supabase.storage
+          .from('receipt-vault')
+          .createSignedUrl(transaction.receiptStoragePath, 60 * 5);
+        if (error) throw new Error(error.message);
+        if (!data.signedUrl) throw new Error('Supabase did not return a receipt preview link.');
+        url = data.signedUrl;
+      }
+      if (!url) throw new Error('This transaction has no viewable receipt file.');
+      setReceiptPreview({ url, filename: transaction.receiptFilename || 'Receipt' });
+    } catch (error) {
+      setReceiptViewError(`Could not open receipt: ${error instanceof Error ? error.message : 'Supabase could not be reached.'}`);
+    } finally {
+      setOpeningReceiptId(null);
+    }
   };
 
   const handleOwnerDecision = async (tx: TransactionRecord, decision: 'APPROVED' | 'REJECTED') => {
@@ -530,7 +588,7 @@ export default function App() {
           {[
             { id: 'dashboard', tab: 'dashboard' as const, label: 'Dashboard', icon: Home },
             { id: 'business-units', tab: 'operations' as const, label: 'Business Units', icon: Layers },
-            { id: 'transactions', tab: 'ledger' as const, label: 'Transactions & Analytics', icon: ReceiptText },
+            { id: 'transactions', tab: 'ledger' as const, label: 'Transactions', icon: ReceiptText },
             { id: 'reports', tab: 'reports' as const, label: 'Reports & Analytics', icon: BarChart3 },
             { id: 'users', tab: 'audit' as const, label: 'User Accounts', icon: Users },
             { id: 'approvals', tab: 'approvals' as const, label: 'Approvals', icon: ShieldCheck },
@@ -1012,6 +1070,11 @@ export default function App() {
                 </button>
               </div>
             </div>
+            {receiptViewError && (
+              <p role="alert" className="border-b border-rose-200 bg-rose-50 px-6 py-2 text-xs text-rose-800">
+                {receiptViewError}
+              </p>
+            )}
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs">
                 <thead className="border-b border-slate-200 bg-slate-50 text-slate-600 uppercase">
@@ -1040,9 +1103,24 @@ export default function App() {
                         <p className="text-slate-500">{tx.description}</p>
                       </td>
                       <td className="px-4 py-3 font-mono text-[11px] text-indigo-600">
-                        <span className="inline-flex items-center gap-1">
-                          <FileText className="h-3.5 w-3.5" /> {tx.receiptFilename}
-                        </span>
+                        {tx.receiptStoragePath || tx.receiptDataUrl ? (
+                          <button
+                            type="button"
+                            onClick={() => { void handleViewReceipt(tx); }}
+                            disabled={openingReceiptId === tx.id}
+                            aria-label={`View receipt ${tx.receiptFilename || ''}`}
+                            className="inline-flex items-center gap-1 text-left hover:text-indigo-800 hover:underline disabled:opacity-60"
+                          >
+                            <FileText className="h-3.5 w-3.5 shrink-0" />
+                            {openingReceiptId === tx.id ? 'Opening receipt…' : tx.receiptFilename || 'View receipt'}
+                          </button>
+                        ) : tx.receiptFilename ? (
+                          <span className="text-slate-400" title="Only the receipt filename was saved; the file is unavailable.">
+                            {tx.receiptFilename}
+                          </span>
+                        ) : (
+                          <span className="text-slate-400">—</span>
+                        )}
                       </td>
                       <td
                         className={`px-4 py-3 text-right font-bold ${
@@ -1236,6 +1314,44 @@ export default function App() {
           onClose={() => setShowPipelineModal(false)}
           onSubmitTransaction={handleAddTransaction}
         />
+      )}
+      {receiptPreview && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Receipt preview: ${receiptPreview.filename}`}
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/70 p-4"
+        >
+          <div className="flex h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-xl bg-white shadow-2xl">
+            <div className="flex items-center justify-between gap-4 border-b border-slate-200 px-4 py-3">
+              <h2 className="truncate text-sm font-bold text-slate-900">{receiptPreview.filename}</h2>
+              <div className="flex shrink-0 items-center gap-3">
+                <a
+                  href={receiptPreview.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs font-semibold text-indigo-700 hover:underline"
+                >
+                  Open in new tab
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setReceiptPreview(null)}
+                  className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+            <iframe
+              title={`Receipt preview: ${receiptPreview.filename}`}
+              src={receiptPreview.url}
+              referrerPolicy="no-referrer"
+              sandbox="allow-scripts"
+              className="min-h-0 flex-1 bg-slate-100"
+            />
+          </div>
+        </div>
       )}
     </div>
   );

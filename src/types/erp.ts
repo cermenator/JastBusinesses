@@ -37,6 +37,7 @@ export interface TransactionRecord {
   vatAmount: number;
   receiptFilename?: string;
   receiptDataUrl?: string;
+  receiptStoragePath?: string;
   reconciled: boolean;
   status: TransactionStatus;
   gateReason: string;
@@ -45,6 +46,10 @@ export interface TransactionRecord {
   txDate: string;
   createdAt: string;
 }
+
+export type NewTransactionRecord = Omit<TransactionRecord, 'id' | 'createdAt'> & {
+  receiptFile?: File;
+};
 
 export interface AuditLogEntry {
   id: number;

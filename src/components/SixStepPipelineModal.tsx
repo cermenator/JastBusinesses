@@ -9,13 +9,13 @@ import {
   FileCheck2,
   X,
 } from 'lucide-react';
-import { BusinessId, TransactionRecord, TransactionType, UserAccount } from '../types/erp';
+import { BusinessId, NewTransactionRecord, TransactionType, UserAccount } from '../types/erp';
 import { BUSINESS_UNITS } from '../lib/seedData';
 
 interface Props {
   currentUser: UserAccount;
   onClose: () => void;
-  onSubmitTransaction: (tx: Omit<TransactionRecord, 'id' | 'createdAt'>) => Promise<boolean>;
+  onSubmitTransaction: (tx: NewTransactionRecord) => Promise<boolean>;
 }
 
 const STEPS = [
@@ -61,6 +61,8 @@ export const SixStepPipelineModal: React.FC<Props> = ({
   const [amount, setAmount] = useState('');
   const [txDate, setTxDate] = useState(new Date().toISOString().slice(0, 10));
   const [receiptFilename, setReceiptFilename] = useState('');
+  const [receiptFile, setReceiptFile] = useState<File | null>(null);
+  const [receiptError, setReceiptError] = useState('');
   const [category, setCategory] = useState(
     CATEGORIES_BY_BUSINESS[currentUser.businessId || currentUser.businessIds?.[0] || 'real_estate'][0].value
   );
@@ -94,9 +96,27 @@ export const SixStepPipelineModal: React.FC<Props> = ({
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      setReceiptFilename(file.name);
+    if (!file) return;
+
+    const extension = file.name.split('.').pop()?.toLowerCase();
+    const allowedMimeTypes: Record<string, string> = {
+      pdf: 'application/pdf',
+      jpg: 'image/jpeg',
+      jpeg: 'image/jpeg',
+      png: 'image/png',
+    };
+    const expectedMimeType = extension ? allowedMimeTypes[extension] : undefined;
+    if (!expectedMimeType || (file.type && file.type !== expectedMimeType)) {
+      setReceiptError('Choose a PDF, JPG, or PNG receipt.');
+      setReceiptFile(null);
+      setReceiptFilename('');
+      e.target.value = '';
+      return;
     }
+
+    setReceiptError('');
+    setReceiptFile(file);
+    setReceiptFilename(file.name);
   };
 
   const handleFinalSubmit = async () => {
@@ -112,7 +132,8 @@ export const SixStepPipelineModal: React.FC<Props> = ({
       description: description || `${category} entry via 6-Step Pipeline`,
       amount: numericAmount,
       vatAmount,
-      receiptFilename: receiptFilename || `OR_${generatedRef}.pdf`,
+      receiptFilename: receiptFilename || undefined,
+      receiptFile: receiptFile || undefined,
       reconciled,
       status: triggersGate ? 'PENDING_APPROVAL' : 'APPROVED',
       gateReason,
@@ -251,20 +272,17 @@ export const SixStepPipelineModal: React.FC<Props> = ({
               <label className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-indigo-300 bg-indigo-50/40 p-8 cursor-pointer hover:bg-indigo-50 transition">
                 <FileUp className="h-10 w-10 text-indigo-600 mb-2" />
                 <span className="text-sm font-semibold text-slate-800">
-                  {receiptFilename ? `Attached: ${receiptFilename}` : 'Click to attach Official Receipt / Sales Invoice (PDF, JPG, PNG)'}
+                  {receiptFile ? `Attached: ${receiptFilename}` : 'Click to attach Official Receipt / Sales Invoice (PDF, JPG, PNG)'}
                 </span>
-                <span className="text-xs text-slate-500 mt-1">Auto-indexed into private bucket: /receipt-vault/{businessId}/</span>
-                <input type="file" className="hidden" onChange={handleFileChange} />
+                <span className="text-xs text-slate-500 mt-1">Uploaded securely to the private receipt vault.</span>
+                <input
+                  type="file"
+                  accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"
+                  className="hidden"
+                  onChange={handleFileChange}
+                />
               </label>
-              {!receiptFilename && (
-                <button
-                  type="button"
-                  onClick={() => setReceiptFilename(`OR_Scanned_${Date.now().toString().slice(-4)}.pdf`)}
-                  className="text-xs font-medium text-indigo-600 hover:underline"
-                >
-                  + Simulate scanned Official Receipt attachment
-                </button>
-              )}
+              {receiptError && <p role="alert" className="text-xs font-medium text-rose-700">{receiptError}</p>}
             </div>
           )}
 
