@@ -1056,6 +1056,7 @@ export default function App() {
                 txDate: startDate,
               });
             }}
+            onJewelryReturn={() => { void loadLedger(); }}
           />
         )}
       </main>

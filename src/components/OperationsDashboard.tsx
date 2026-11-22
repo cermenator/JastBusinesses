@@ -9,6 +9,7 @@ import {
   MapPin,
   Pencil,
   PlusCircle,
+  RotateCcw,
   ShoppingBag,
   Ban,
   X,
@@ -76,6 +77,7 @@ interface JewelrySaleRecord {
   customerName: string;
   soldAt: string;
   processedBy: string;
+  returned: boolean;
 }
 
 interface OperationsData {
@@ -101,6 +103,7 @@ interface Props {
     monthlyRent: number,
     customerName: string
   ) => Promise<boolean>;
+  onJewelryReturn: () => void;
 }
 
 const TODAY = new Date().toISOString().slice(0, 10);
@@ -126,6 +129,15 @@ function formatBookingDate(date: string): string {
     year: 'numeric',
     timeZone: 'UTC',
   });
+}
+
+function isJewelrySaleReturnEligible(soldAt: string): boolean {
+  const soldAtTime = new Date(soldAt).getTime();
+  return Number.isFinite(soldAtTime) && Date.now() <= soldAtTime + 7 * 24 * 60 * 60 * 1000;
+}
+
+function jewelryReturnDeadline(soldAt: string): string {
+  return new Date(new Date(soldAt).getTime() + 7 * 24 * 60 * 60 * 1000).toLocaleString('en-PH');
 }
 
 function propertyBookingStatus(bookings: PropertyBookingRecord[], propertyId: string) {
@@ -251,10 +263,12 @@ export const OperationsDashboard: React.FC<Props> = ({
   onJewelrySale,
   onCourtBooking,
   onPropertyBooking,
+  onJewelryReturn,
 }) => {
   const [data, setData] = useState(EMPTY_DATA);
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(true);
+  const [returningSaleId, setReturningSaleId] = useState<string | null>(null);
   const [photoPreview, setPhotoPreview] = useState<{ itemId: string; photoIndex: number } | null>(null);
   const [propertyPreview, setPropertyPreview] = useState<{ propertyId: string; photoIndex: number } | null>(null);
   const [activeForm, setActiveForm] = useState<'property' | 'propertyBooking' | 'jewelry' | 'court' | 'booking' | 'sale' | null>(null);
@@ -308,13 +322,14 @@ export const OperationsDashboard: React.FC<Props> = ({
     }
     setLoading(true);
     try {
-      const [propertyResult, propertyBookingResult, jewelryResult, courtResult, bookingResult, saleResult] = await Promise.all([
+      const [propertyResult, propertyBookingResult, jewelryResult, courtResult, bookingResult, saleResult, returnResult] = await Promise.all([
         supabase.from('properties').select('*').order('created_at', { ascending: false }),
         supabase.from('property_bookings').select('*').order('created_at', { ascending: false }),
         supabase.from('jewelry_inventory').select('*').order('created_at', { ascending: false }),
         supabase.from('pickleball_courts').select('*').order('created_at', { ascending: false }),
         supabase.from('court_bookings').select('*').order('created_at', { ascending: false }),
         supabase.from('jewelry_sales').select('*').order('sold_at', { ascending: false }),
+        supabase.from('jewelry_returns').select('sale_id'),
       ]);
       for (const [label, result] of [
         ['properties', propertyResult],
@@ -323,11 +338,12 @@ export const OperationsDashboard: React.FC<Props> = ({
         ['pickleball courts', courtResult],
         ['court bookings', bookingResult],
         ['jewelry sales', saleResult],
+        ['jewelry returns', returnResult],
       ] as const) {
         if (result.error) throw new Error(`Could not load ${label} from Supabase: ${result.error.message}`);
       }
       if (!propertyResult.data || !propertyBookingResult.data || !jewelryResult.data ||
-        !courtResult.data || !bookingResult.data || !saleResult.data) {
+        !courtResult.data || !bookingResult.data || !saleResult.data || !returnResult.data) {
         throw new Error('Supabase returned incomplete Operations data.');
       }
 
@@ -388,6 +404,7 @@ export const OperationsDashboard: React.FC<Props> = ({
         customerName: row.customer_name,
         soldAt: row.sold_at,
         processedBy: row.processed_by,
+        returned: returnResult.data.some((returned) => returned.sale_id === row.id),
       }));
       setData({ properties, propertyBookings, jewelry, courts, bookings, sales });
       setMessage('');
@@ -477,7 +494,7 @@ export const OperationsDashboard: React.FC<Props> = ({
     { costValue: 0, sellingValue: 0 }
   );
   const jewelrySalesRevenue = data.sales.reduce(
-    (total, sale) => total + sale.unitPrice * sale.quantity,
+    (total, sale) => total + (sale.returned ? 0 : sale.unitPrice * sale.quantity),
     0
   );
   const selectedProperty = data.properties.find((property) => property.id === propertyBookingForm.propertyId);
@@ -816,6 +833,30 @@ export const OperationsDashboard: React.FC<Props> = ({
     if (!ledgerSaved) setMessage('Jewelry sale and stock update were saved to Supabase, but its revenue entry could not be saved. Check the ledger error and retry.');
   };
 
+  const returnJewelrySale = async (sale: JewelrySaleRecord) => {
+    if (!isOwner) {
+      setMessage('Only an owner can process a jewelry return or refund.');
+      return;
+    }
+    if (sale.returned || !isJewelrySaleReturnEligible(sale.soldAt)) {
+      setMessage('This sale is no longer eligible for a return or refund. Returns must be completed within 7 days of purchase.');
+      return;
+    }
+    if (!window.confirm(`Return all ${sale.quantity} item(s) from ${sale.itemName} for ${money(sale.unitPrice * sale.quantity)}?\n\nThis records a refund expense and returns the items to inventory. Complete the actual payment to the customer separately.`)) return;
+
+    setReturningSaleId(sale.id);
+    try {
+      const { error } = await supabase!.rpc('return_jewelry_sale', { p_sale_id: sale.id });
+      if (error) throw new Error(error.message);
+      await refreshData();
+      onJewelryReturn();
+    } catch (error) {
+      setMessage(`Could not process jewelry return: ${error instanceof Error ? error.message : 'Supabase could not be reached.'}`);
+    } finally {
+      setReturningSaleId(null);
+    }
+  };
+
   const inputClass = 'w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm';
   const labelClass = 'mb-1 block text-xs font-semibold text-slate-600';
   const canEditCatalog = isOwner;
@@ -1131,9 +1172,9 @@ export const OperationsDashboard: React.FC<Props> = ({
               <p className="mt-1 text-[11px] text-slate-500">Selling price × current stock</p>
             </div>
             <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
-              <p className="text-xs font-semibold text-emerald-700">RECORDED SALES REVENUE</p>
+              <p className="text-xs font-semibold text-emerald-700">NET RECORDED SALES REVENUE</p>
               <p className="mt-1 text-lg font-bold text-emerald-800">{money(jewelrySalesRevenue)}</p>
-              <p className="mt-1 text-[11px] text-emerald-700">Total from completed jewelry sales</p>
+              <p className="mt-1 text-[11px] text-emerald-700">Completed sales less full returns/refunds</p>
             </div>
           </div>
           {activeForm === 'jewelry' && canEditCatalog && (
@@ -1201,7 +1242,39 @@ export const OperationsDashboard: React.FC<Props> = ({
                   <div className="flex gap-2 sm:col-span-2 lg:col-span-4"><button onClick={processSale} className="rounded-lg bg-amber-600 px-4 py-2 text-xs font-semibold text-white">Complete sale & update stock</button><button onClick={() => setActiveForm(null)} className="rounded-lg border border-slate-300 px-4 py-2 text-xs">Cancel</button></div>
                 </div>
               )}
-              {data.sales.length > 0 && <div className="mt-3 divide-y divide-slate-100">{data.sales.map((sale) => <div key={sale.id} className="flex flex-wrap justify-between gap-2 py-2 text-xs"><span className="font-semibold text-slate-800">{sale.itemName} × {sale.quantity} • {money(sale.unitPrice * sale.quantity)}</span><span className="text-slate-500">{sale.customerName} • {new Date(sale.soldAt).toLocaleString()} • {sale.processedBy}</span></div>)}</div>}
+              {data.sales.length > 0 && (
+                <div className="mt-3 divide-y divide-slate-100">
+                  {data.sales.map((sale) => {
+                    const eligible = !sale.returned && isJewelrySaleReturnEligible(sale.soldAt);
+                    return (
+                      <div key={sale.id} className="flex flex-wrap items-center justify-between gap-3 py-2 text-xs">
+                        <div>
+                          <span className="font-semibold text-slate-800">
+                            {sale.itemName} × {sale.quantity} • {money(sale.unitPrice * sale.quantity)}
+                          </span>
+                          {sale.returned && <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600">Returned / refunded</span>}
+                          {!sale.returned && !eligible && <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600">Return window expired</span>}
+                          {isOwner && !sale.returned && eligible && (
+                            <p className="mt-1 text-[10px] text-slate-500">Return/refund by {jewelryReturnDeadline(sale.soldAt)} · full sale only</p>
+                          )}
+                          <p className="mt-1 text-slate-500">{sale.customerName} • {new Date(sale.soldAt).toLocaleString()} • {sale.processedBy}</p>
+                        </div>
+                        {isOwner && !sale.returned && eligible && (
+                          <button
+                            type="button"
+                            onClick={() => { void returnJewelrySale(sale); }}
+                            disabled={returningSaleId === sale.id}
+                            className="inline-flex items-center gap-1 rounded-md border border-amber-300 px-2.5 py-1.5 font-semibold text-amber-800 hover:bg-amber-50 disabled:cursor-wait disabled:opacity-60"
+                          >
+                            <RotateCcw className="h-3.5 w-3.5" />
+                            {returningSaleId === sale.id ? 'Processing…' : 'Return / Refund'}
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
         </section>
