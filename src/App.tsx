@@ -531,7 +531,6 @@ export default function App() {
             { id: 'dashboard', tab: 'dashboard' as const, label: 'Dashboard', icon: Home },
             { id: 'business-units', tab: 'operations' as const, label: 'Business Units', icon: Layers },
             { id: 'transactions', tab: 'ledger' as const, label: 'Transactions & Analytics', icon: ReceiptText },
-            { id: 'documents', tab: 'audit' as const, label: 'Documents', icon: FileText },
             { id: 'reports', tab: 'reports' as const, label: 'Reports & Analytics', icon: BarChart3 },
             { id: 'users', tab: 'audit' as const, label: 'User Accounts', icon: Users },
             { id: 'approvals', tab: 'approvals' as const, label: 'Approvals', icon: ShieldCheck },
