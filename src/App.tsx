@@ -47,6 +47,21 @@ import { LegacyDataImport } from './components/LegacyDataImport';
 import { ReportsAnalytics } from './components/ReportsAnalytics';
 import { isSupabaseConfigured, supabase } from './lib/supabaseClient';
 
+const downloadCsv = (filename: string, headers: Array<string | number>, rows: Array<Array<string | number>>) => {
+  const escapeCell = (value: string | number) => {
+    let text = String(value);
+    if (typeof value === 'string' && /^[\s]*[=+\-@]/.test(text)) text = `'${text}`;
+    return `"${text.replace(/"/g, '""')}"`;
+  };
+  const csv = `\uFEFF${[headers, ...rows].map((row) => row.map(escapeCell).join(',')).join('\r\n')}`;
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+};
+
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [authReady, setAuthReady] = useState(false);
@@ -225,6 +240,9 @@ export default function App() {
       return transactions.filter((t) => t.businessId === selectedBusinessFilter);
     }
     const accessibleBusinesses = currentUser.businessIds || (currentUser.businessId ? [currentUser.businessId] : []);
+    if (selectedBusinessFilter !== 'ALL' && accessibleBusinesses.includes(selectedBusinessFilter)) {
+      return transactions.filter((t) => t.businessId === selectedBusinessFilter);
+    }
     return transactions.filter((t) => accessibleBusinesses.includes(t.businessId));
   }, [transactions, currentUser, selectedBusinessFilter]);
 
@@ -234,8 +252,25 @@ export default function App() {
       return auditLogs.filter((l) => l.businessId === selectedBusinessFilter);
     }
     const accessibleBusinesses = currentUser.businessIds || (currentUser.businessId ? [currentUser.businessId] : []);
+    if (selectedBusinessFilter !== 'ALL' && accessibleBusinesses.includes(selectedBusinessFilter)) {
+      return auditLogs.filter((l) => l.businessId === selectedBusinessFilter);
+    }
     return auditLogs.filter((l) => accessibleBusinesses.includes(l.businessId));
   }, [auditLogs, currentUser, selectedBusinessFilter]);
+
+  const visibleBusinessIds = currentUser.role === 'owner'
+    ? selectedBusinessFilter === 'ALL' ? BUSINESS_UNITS.map((unit) => unit.id) : [selectedBusinessFilter]
+    : selectedBusinessFilter !== 'ALL' &&
+        (currentUser.businessIds || (currentUser.businessId ? [currentUser.businessId] : [])).includes(selectedBusinessFilter)
+      ? [selectedBusinessFilter]
+      : currentUser.businessIds || (currentUser.businessId ? [currentUser.businessId] : []);
+  const visibleBusinessLabel = visibleBusinessIds.length === 1
+    ? BUSINESS_UNITS.find((unit) => unit.id === visibleBusinessIds[0])?.name || 'Selected venture'
+    : currentUser.role === 'owner' ? 'All JAST Ventures' : 'Your authorized ventures';
+  const exportScope = visibleBusinessIds.length === 1
+    ? BUSINESS_UNITS.find((unit) => unit.id === visibleBusinessIds[0])?.code || visibleBusinessIds[0]
+    : currentUser.role === 'owner' ? 'All_Ventures' : 'Authorized_Ventures';
+  const exportDate = new Date().toISOString().slice(0, 10);
 
   const pendingApprovals = useMemo(
     () => rlsVisibleTransactions.filter((t) => t.status === 'PENDING_APPROVAL'),
@@ -361,24 +396,102 @@ export default function App() {
     ];
     const rows = rlsVisibleTransactions.map((t) => [
       t.referenceNo,
-      t.businessId.toUpperCase(),
+      BUSINESS_UNITS.find((unit) => unit.id === t.businessId)?.code || t.businessId,
       t.txDate,
       t.txType,
-      `"${t.category}"`,
+      t.category,
       t.counterpartyTin || '',
-      `"${t.counterpartyName}"`,
+      t.counterpartyName,
       t.amount.toFixed(2),
       t.vatAmount.toFixed(2),
       t.status,
       t.receiptFilename || '',
     ]);
-    const csv = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `JAST_BIR_CAS_Ledger_${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
+    downloadCsv(`JAST_BIR_CAS_Ledger_${exportScope}_${exportDate}.csv`, headers, rows);
+  };
+
+  const handleExportTransactionCsv = () => {
+    const headers = [
+      'Transaction_ID',
+      'Reference_No',
+      'Business_Unit',
+      'Business_Name',
+      'Transaction_Date',
+      'Created_At',
+      'Type',
+      'Category',
+      'Counterparty_Name',
+      'Counterparty_TIN',
+      'Description',
+      'Amount_PHP',
+      'VAT_PHP',
+      'Status',
+      'Reconciled',
+      'Gate_Reason',
+      'Submitted_By',
+      'Approved_By',
+      'Receipt_File',
+    ];
+    const rows = rlsVisibleTransactions.map((transaction) => {
+      const business = BUSINESS_UNITS.find((unit) => unit.id === transaction.businessId);
+      return [
+        transaction.id,
+        transaction.referenceNo,
+        business?.code || transaction.businessId,
+        business?.name || transaction.businessId,
+        transaction.txDate,
+        transaction.createdAt,
+        transaction.txType,
+        transaction.category,
+        transaction.counterpartyName,
+        transaction.counterpartyTin || '',
+        transaction.description,
+        transaction.amount.toFixed(2),
+        transaction.vatAmount.toFixed(2),
+        transaction.status,
+        transaction.reconciled ? 'Yes' : 'No',
+        transaction.gateReason,
+        transaction.submittedBy,
+        transaction.approvedBy || '',
+        transaction.receiptFilename || '',
+      ];
+    });
+    downloadCsv(`JAST_Transaction_Ledger_${exportScope}_${exportDate}.csv`, headers, rows);
+  };
+
+  const handleExportAuditCsv = () => {
+    const headers = [
+      'Log_ID',
+      'Transaction_ID',
+      'Reference_No',
+      'Business_Unit',
+      'Business_Name',
+      'Timestamp',
+      'Action',
+      'Actor',
+      'Previous_Status',
+      'New_Status',
+      'Amount_PHP',
+      'Remarks',
+    ];
+    const rows = rlsVisibleAuditLogs.map((log) => {
+      const business = BUSINESS_UNITS.find((unit) => unit.id === log.businessId);
+      return [
+        log.id,
+        log.transactionId,
+        log.referenceNo,
+        business?.code || log.businessId,
+        business?.name || log.businessId,
+        log.recordedAt,
+        log.action,
+        log.actorName,
+        log.oldStatus || 'NEW',
+        log.newStatus,
+        log.amount.toFixed(2),
+        log.remarks,
+      ];
+    });
+    downloadCsv(`JAST_Audit_Trail_${exportScope}_${exportDate}.csv`, headers, rows);
   };
 
   if (!isSupabaseConfigured) {
@@ -590,18 +703,22 @@ export default function App() {
             {/* Tenant Scope Indicator */}
             <div className="flex min-w-0 flex-wrap items-center justify-end gap-2 text-xs lg:max-w-[24rem]">
               <span className="text-slate-400">Tenant Scope:</span>
-              {currentUser.role === 'owner' ? (
+              {currentUser.role === 'owner' || (currentUser.businessIds || []).length > 1 ? (
                 <select
                   value={selectedBusinessFilter}
                   onChange={(e) => setSelectedBusinessFilter(e.target.value as BusinessId | 'ALL')}
                   className="max-w-full rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1 text-xs font-medium text-white"
                 >
-                  <option value="ALL">All JAST Ventures (Consolidated)</option>
-                  {BUSINESS_UNITS.map((b) => (
-                    <option key={b.id} value={b.id}>
-                      {b.name}
-                    </option>
-                  ))}
+                  <option value="ALL">
+                    {currentUser.role === 'owner' ? 'All JAST Ventures (Consolidated)' : 'All Authorized Ventures'}
+                  </option>
+                  {BUSINESS_UNITS
+                    .filter((business) => currentUser.role === 'owner' || (currentUser.businessIds || []).includes(business.id))
+                    .map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.name}
+                      </option>
+                    ))}
                 </select>
               ) : (
                 <span className="inline-flex items-center gap-1 rounded-lg bg-amber-500/15 border border-amber-500/30 px-2.5 py-1 text-xs font-semibold text-amber-300">
@@ -878,15 +995,23 @@ export default function App() {
               <div>
                 <h2 className="text-base font-bold text-slate-900">Unified Financial Transaction Ledger</h2>
                 <p className="text-xs text-slate-500">
-                  Showing {rlsVisibleTransactions.length} RLS-authorized records
+                  Showing {rlsVisibleTransactions.length} RLS-authorized records for {visibleBusinessLabel}
                 </p>
               </div>
-              <button
-                onClick={handleExportBirCsv}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-              >
-                <Download className="h-3.5 w-3.5" /> Export BIR CAS CSV
-              </button>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={handleExportTransactionCsv}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  <Download className="h-3.5 w-3.5" /> Export Excel CSV
+                </button>
+                <button
+                  onClick={handleExportBirCsv}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  <Download className="h-3.5 w-3.5" /> Export BIR CAS CSV
+                </button>
+              </div>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs">
@@ -963,16 +1088,27 @@ export default function App() {
         {/* TAB 4: IMMUTABLE SYSTEM AUDIT TRAIL */}
         {activeTab === 'audit' && (
           <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-            <div className="border-b border-slate-200 px-6 py-4">
-              <div className="flex items-center gap-2">
-                <History className="h-4 w-4 text-indigo-600" />
-                <h2 className="text-base font-bold text-slate-900">
-                  Immutable Chronological System Audit Trail (BIR RMO 1-2020)
-                </h2>
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-6 py-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <History className="h-4 w-4 text-indigo-600" />
+                  <h2 className="text-base font-bold text-slate-900">
+                    Immutable Chronological System Audit Trail (BIR RMO 1-2020)
+                  </h2>
+                </div>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Append-only PostgreSQL trigger ledger recording inserts, approvals, rejections, and cancellations.
+                </p>
+                <p className="mt-1 text-xs text-slate-500">
+                  Showing {rlsVisibleAuditLogs.length} records for {visibleBusinessLabel}
+                </p>
               </div>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Append-only PostgreSQL trigger ledger recording inserts, approvals, rejections, and cancellations.
-              </p>
+              <button
+                onClick={handleExportAuditCsv}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                <Download className="h-3.5 w-3.5" /> Export Audit Excel CSV
+              </button>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs">
@@ -981,6 +1117,7 @@ export default function App() {
                     <th className="px-4 py-3">Log ID</th>
                     <th className="px-4 py-3">Timestamp</th>
                     <th className="px-4 py-3">Ref No.</th>
+                    <th className="px-4 py-3">Venture</th>
                     <th className="px-4 py-3">Action</th>
                     <th className="px-4 py-3">Actor</th>
                     <th className="px-4 py-3">Transition</th>
@@ -993,6 +1130,11 @@ export default function App() {
                       <td className="px-4 py-3 font-mono text-slate-500">#{log.id}</td>
                       <td className="px-4 py-3 font-mono text-slate-600">{log.recordedAt}</td>
                       <td className="px-4 py-3 font-mono font-semibold text-slate-900">{log.referenceNo}</td>
+                      <td className="px-4 py-3">
+                        <span className="rounded bg-slate-100 px-2 py-0.5 font-semibold text-slate-700">
+                          {BUSINESS_UNITS.find((unit) => unit.id === log.businessId)?.code || log.businessId}
+                        </span>
+                      </td>
                       <td className="px-4 py-3">
                         <span className="rounded bg-indigo-50 px-2 py-0.5 font-bold text-indigo-700">
                           {log.action}

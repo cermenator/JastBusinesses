@@ -11,7 +11,7 @@ Full-stack prototype and production blueprint for **Development of an Integrated
    - PostgreSQL Row-Level Security (`RLS`) policies isolating branch data
    - Automated **Owner Approval Gate** trigger (`> ₱30,000` or Jewelry inventory write-offs)
    - Immutable `audit_logs` trigger preventing tampering (BIR RMO 1-2020 & Reg. 17-2013 compliant)
-3. **`src/`** — Full React + TypeScript + Vite + Tailwind CSS source code ready for Supabase deployment.
+3. **`src/`** — Full React + TypeScript + Vite + Tailwind CSS source code ready for Supabase deployment. The transaction ledger and audit trail can be scoped by venture and downloaded as separate Excel-compatible CSV files.
 
 ## Business Operations
 
