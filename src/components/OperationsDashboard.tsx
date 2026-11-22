@@ -207,7 +207,7 @@ export const OperationsDashboard: React.FC<Props> = ({
   const [activeForm, setActiveForm] = useState<'property' | 'propertyBooking' | 'jewelry' | 'court' | 'booking' | 'sale' | null>(null);
   const [editingCatalogId, setEditingCatalogId] = useState<string | null>(null);
   const [photoError, setPhotoError] = useState('');
-  const isOwner = currentUser.role === 'owner' && currentUser.name === "Ma'am Jasmin Taurak";
+  const isOwner = currentUser.role === 'owner';
   const allowedBusinesses = currentUser.role === 'owner'
     ? ['real_estate', 'pickleball', 'jewelry']
     : currentUser.businessIds || (currentUser.businessId ? [currentUser.businessId] : []);
@@ -429,7 +429,7 @@ export const OperationsDashboard: React.FC<Props> = ({
 
   const addProperty = async () => {
     if (!isOwner) {
-      setMessage('Only Ma’am Jasmin Taurak can edit the property catalog.');
+      setMessage('Only an owner can edit the property catalog.');
       return;
     }
     const rent = Number(propertyForm.rent);
@@ -517,7 +517,7 @@ export const OperationsDashboard: React.FC<Props> = ({
 
   const saveJewelryItem = async () => {
     if (!isOwner) {
-      setMessage('Only Ma’am Jasmin Taurak can edit the jewelry catalog.');
+      setMessage('Only an owner can edit the jewelry catalog.');
       return;
     }
     const unitCost = Number(jewelryForm.cost);
@@ -574,7 +574,7 @@ export const OperationsDashboard: React.FC<Props> = ({
 
   const saveCourt = async () => {
     if (!isOwner) {
-      setMessage('Only Ma’am Jasmin Taurak can edit the pickleball court catalog.');
+      setMessage('Only an owner can edit the pickleball court catalog.');
       return;
     }
     if (!courtForm.name.trim()) {
@@ -726,7 +726,7 @@ export const OperationsDashboard: React.FC<Props> = ({
         <p className="mt-1 text-xs text-slate-500">
           Properties, court availability, jewelry stock, bookings, and sales.
           {isOwner
-            ? ' Only Ma’am Jasmin Taurak can add or edit catalog records.'
+            ? ' Owners can add or edit catalog records.'
             : ' Catalog records are read-only; bookings and jewelry sales are enabled for your staff account.'}
         </p>
       </div>

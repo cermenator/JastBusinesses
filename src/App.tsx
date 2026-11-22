@@ -519,7 +519,7 @@ export default function App() {
           </div>
         )}
         {ledgerLoading && <p role="status" className="text-sm text-slate-500">Loading transactions and audit history from Supabase...</p>}
-        {currentUser.role === 'owner' && currentUser.name === "Ma'am Jasmin Taurak" && (
+        {currentUser.role === 'owner' && (
           <LegacyDataImport
             userId={currentUser.id}
             userName={currentUser.name}

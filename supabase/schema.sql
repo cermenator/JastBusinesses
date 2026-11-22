@@ -370,7 +370,9 @@ BEGIN
     END IF;
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public;
 
 CREATE TRIGGER trg_transaction_audit_trail
 AFTER INSERT OR UPDATE ON public.transactions
@@ -390,16 +392,25 @@ ALTER TABLE public.transactions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
 
 -- Business units are readable by authenticated users
+GRANT SELECT ON public.business_units TO authenticated;
+GRANT SELECT ON public.user_profiles TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.user_business_access TO authenticated;
+GRANT SELECT, INSERT, UPDATE ON public.properties TO authenticated;
+GRANT SELECT, INSERT, UPDATE ON public.property_bookings TO authenticated;
+GRANT SELECT, INSERT, UPDATE ON public.jewelry_inventory TO authenticated;
+GRANT SELECT, INSERT, UPDATE ON public.pickleball_courts TO authenticated;
+GRANT SELECT, INSERT, UPDATE ON public.court_bookings TO authenticated;
+GRANT SELECT, INSERT ON public.jewelry_sales TO authenticated;
+GRANT SELECT, INSERT, UPDATE ON public.transactions TO authenticated;
+GRANT SELECT ON public.audit_logs TO authenticated;
+
 CREATE POLICY "Authenticated users can view business units"
 ON public.business_units FOR SELECT TO authenticated USING (true);
 
 -- User profiles: users read own profile; owner reads all
 CREATE POLICY "Users read own profile or owner reads all"
 ON public.user_profiles FOR SELECT TO authenticated
-USING (
-    auth.uid() = id OR
-    EXISTS (SELECT 1 FROM public.user_profiles up WHERE up.id = auth.uid() AND up.role = 'owner')
-);
+USING (auth.uid() = id OR public.is_jasmin_owner());
 
 CREATE POLICY "Users read their own business access"
 ON public.user_business_access FOR SELECT TO authenticated
