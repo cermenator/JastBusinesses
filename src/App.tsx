@@ -404,7 +404,6 @@ export default function App() {
             { id: 'users', tab: 'audit' as const, label: 'User Accounts', icon: Users },
             { id: 'approvals', tab: 'approvals' as const, label: 'Approvals', icon: ShieldCheck },
             { id: 'audit-trail', tab: 'audit' as const, label: 'Audit Trail', icon: History },
-            { id: 'settings', tab: 'operations' as const, label: 'System Settings', icon: PlusCircle },
           ].map((item) => {
             const Icon = item.icon;
             return (
@@ -423,19 +422,6 @@ export default function App() {
               </button>
             );
           })}
-          <button
-            type="button"
-            onClick={() => {
-              setSelectedSidebarItem('record-transaction');
-              setShowPipelineModal(true);
-            }}
-            className={`mb-1 flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left text-xs transition ${
-              selectedSidebarItem === 'record-transaction' ? 'bg-[#d8a72d] text-[#073d30]' : 'text-white/80 hover:bg-white/10 hover:text-white'
-            }`}
-          >
-            <PlusCircle className="h-4 w-4" />
-            Record Transaction
-          </button>
         </nav>
         <button onClick={() => { void handleSignOut(); }} className="mx-2 mb-5 flex items-center gap-3 rounded-md px-3 py-2.5 text-xs text-white/80 hover:bg-white/10">
           <LogOut className="h-4 w-4" /> Log Out
@@ -645,6 +631,16 @@ export default function App() {
         {/* TAB 1: CENTRALIZED OWNER DASHBOARD */}
         {activeTab === 'dashboard' && (
           <div className="space-y-6">
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShowPipelineModal(true)}
+                className="inline-flex items-center gap-2 rounded-md bg-[#075b43] px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition hover:bg-[#064a37] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#075b43]"
+              >
+                <PlusCircle className="h-4 w-4" />
+                Record Transaction
+              </button>
+            </div>
             {/* Top KPI Cards */}
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <div className="flex min-h-[86px] items-center rounded-lg border-l-4 border-blue-500 bg-white p-4 shadow-sm">
