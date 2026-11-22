@@ -142,13 +142,16 @@ BEFORE UPDATE ON public.transactions
 FOR EACH ROW EXECUTE FUNCTION public.prevent_unauthorized_transaction_cancel();
 
 CREATE TABLE IF NOT EXISTS public.jewelry_returns (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     sale_id UUID NOT NULL UNIQUE REFERENCES public.jewelry_sales(id),
     transaction_id UUID UNIQUE REFERENCES public.transactions(id),
     amount NUMERIC(14, 2) NOT NULL CHECK (amount >= 0),
     processed_by UUID NOT NULL REFERENCES public.user_profiles(id),
     returned_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE public.jewelry_returns
+ALTER COLUMN id SET DEFAULT gen_random_uuid();
 
 ALTER TABLE public.jewelry_returns ENABLE ROW LEVEL SECURITY;
 GRANT SELECT ON public.jewelry_returns TO authenticated;
@@ -220,7 +223,7 @@ AS $$
 DECLARE
     v_sale public.jewelry_sales%ROWTYPE;
     v_original_transaction public.transactions%ROWTYPE;
-    v_return_id UUID := uuid_generate_v4();
+    v_return_id UUID := gen_random_uuid();
     v_refund_transaction_id UUID;
     v_reference TEXT;
     v_owner_name TEXT;

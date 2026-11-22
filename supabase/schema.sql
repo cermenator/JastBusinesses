@@ -280,7 +280,7 @@ CREATE TABLE public.transactions (
 );
 
 CREATE TABLE public.jewelry_returns (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     sale_id UUID NOT NULL UNIQUE REFERENCES public.jewelry_sales(id),
     transaction_id UUID UNIQUE REFERENCES public.transactions(id),
     amount NUMERIC(14, 2) NOT NULL CHECK (amount >= 0),
@@ -492,7 +492,7 @@ SET search_path = public
 AS $$
 DECLARE
     v_sale public.jewelry_sales%ROWTYPE;
-    v_return_id UUID := uuid_generate_v4();
+    v_return_id UUID := gen_random_uuid();
     v_original_transaction public.transactions%ROWTYPE;
     v_refund_transaction_id UUID;
     v_reference TEXT;
