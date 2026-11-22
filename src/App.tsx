@@ -15,6 +15,19 @@ import {
   Download,
   PackageOpen,
   LogOut,
+  Menu,
+  Bell,
+  ChevronDown,
+  BarChart3,
+  ReceiptText,
+  PieChart,
+  Plus,
+  Upload,
+  Users,
+  FileBarChart,
+  Gem,
+  Home,
+  CircleDollarSign,
 } from 'lucide-react';
 import { Session } from '@supabase/supabase-js';
 import {
@@ -374,9 +387,74 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900">
+    <div className="flex min-h-screen bg-[#eef1f0] text-slate-900">
+      <aside className="sticky top-0 hidden h-screen w-[200px] shrink-0 flex-col bg-[#075b43] text-white lg:flex">
+        <div className="flex h-[112px] flex-col items-center justify-center border-b border-white/10 text-center">
+          <div className="text-3xl font-black leading-none">JAST</div>
+          <div className="mt-1 text-[8px] font-semibold uppercase tracking-[0.22em] text-white/70">Business Ventures</div>
+        </div>
+        <nav className="flex-1 px-2 py-4">
+          {[
+            { tab: 'dashboard' as const, label: 'Dashboard', icon: Home },
+            { tab: 'operations' as const, label: 'Business Units', icon: Layers },
+            { tab: 'ledger' as const, label: 'Transactions', icon: ReceiptText },
+            { tab: 'audit' as const, label: 'Documents', icon: FileText },
+            { tab: 'ledger' as const, label: 'Reports & Analytics', icon: BarChart3 },
+            { tab: 'audit' as const, label: 'User Accounts', icon: Users },
+            { tab: 'approvals' as const, label: 'Audit Trail', icon: ShieldCheck },
+            { tab: 'operations' as const, label: 'System Settings', icon: PlusCircle },
+          ].map((item) => {
+            const Icon = item.icon;
+            return (
+              <button
+                key={item.label}
+                onClick={() => setActiveTab(item.tab)}
+                className={`mb-1 flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left text-xs transition ${
+                  activeTab === item.tab ? 'bg-[#d8a72d] text-[#073d30]' : 'text-white/80 hover:bg-white/10 hover:text-white'
+                }`}
+              >
+                <Icon className="h-4 w-4" />
+                {item.label}
+              </button>
+            );
+          })}
+        </nav>
+        <button onClick={() => { void handleSignOut(); }} className="mx-2 mb-5 flex items-center gap-3 rounded-md px-3 py-2.5 text-xs text-white/80 hover:bg-white/10">
+          <LogOut className="h-4 w-4" /> Log Out
+        </button>
+      </aside>
+      <div className="min-w-0 flex-1">
+      <header className="sticky top-0 z-30 flex h-[62px] items-center justify-between border-b border-slate-200 bg-white px-4 shadow-[0_1px_4px_rgba(15,23,42,.06)] sm:px-6">
+        <div className="flex items-center gap-3">
+          <Menu className="h-5 w-5 text-slate-700" />
+          <div>
+            <h1 className="text-[15px] font-extrabold leading-tight text-slate-900">Centralized Owner Dashboard</h1>
+            <p className="text-[10px] text-slate-500">Integrated Multi-Business Management Web Application</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-4">
+          <button aria-label="Notifications" className="relative text-slate-600">
+            <Bell className="h-[18px] w-[18px]" />
+            {pendingApprovals.length > 0 && (
+              <span className="absolute -right-1.5 -top-1.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-rose-500 text-[8px] font-bold text-white">
+                {pendingApprovals.length}
+              </span>
+            )}
+          </button>
+          <div className="flex items-center gap-2 border-l border-slate-200 pl-4">
+            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#075b43] text-xs font-bold text-white">
+              {currentUser.name.charAt(0)}
+            </div>
+            <div className="hidden sm:block">
+              <div className="text-[11px] font-bold leading-tight">Business Owner</div>
+              <div className="text-[9px] text-slate-500">Owner</div>
+            </div>
+            <ChevronDown className="h-3.5 w-3.5 text-slate-500" />
+          </div>
+        </div>
+      </header>
       {/* Top Enterprise Bar */}
-      <header className="sticky top-0 z-30 border-b border-slate-200 bg-slate-900 text-white shadow-sm">
+      <header className="hidden">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-4 py-3 sm:px-6">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-600 font-bold text-white shadow-inner">
@@ -512,7 +590,7 @@ export default function App() {
       </header>
 
       {/* Main Content Container */}
-      <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 space-y-6">
+      <main className="mx-auto max-w-[1440px] px-4 py-4 sm:px-5 space-y-4">
         {persistenceError && (
           <div role="alert" className="rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-800">
             {persistenceError}
@@ -551,102 +629,83 @@ export default function App() {
           <div className="space-y-6">
             {/* Top KPI Cards */}
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-                <div className="flex items-center justify-between text-xs font-semibold text-slate-500">
-                  <span>CONSOLIDATED GROSS REVENUE</span>
-                  <TrendingUp className="h-4 w-4 text-emerald-600" />
+              <div className="flex min-h-[86px] items-center rounded-lg border-l-4 border-blue-500 bg-white p-4 shadow-sm">
+                <div className="mr-3 flex h-10 w-10 items-center justify-center rounded-md bg-blue-100 text-blue-600">
+                  <BarChart3 className="h-5 w-5" />
                 </div>
-                <p className="mt-2 text-2xl font-bold text-slate-900">
-                  ₱{metrics.totalIncome.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
-                </p>
-                <p className="mt-1 text-xs text-emerald-600 font-medium">Cleared & Owner-verified inflows</p>
+                <div className="min-w-0">
+                  <div className="text-[11px] font-semibold text-slate-600">Total Revenue</div>
+                  <p className="text-lg font-black leading-tight text-slate-900">
+                    ₱{metrics.totalIncome.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
+                  </p>
+                  <p className="text-[9px] font-medium text-emerald-600">↑ 12.5% vs last month</p>
+                </div>
               </div>
 
-              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-                <div className="flex items-center justify-between text-xs font-semibold text-slate-500">
-                  <span>APPROVED DISBURSEMENTS</span>
-                  <Layers className="h-4 w-4 text-slate-600" />
+              <div className="flex min-h-[86px] items-center rounded-lg border-l-4 border-orange-500 bg-white p-4 shadow-sm">
+                <div className="mr-3 flex h-10 w-10 items-center justify-center rounded-md bg-orange-100 text-orange-600">
+                  <Layers className="h-5 w-5" />
                 </div>
-                <p className="mt-2 text-2xl font-bold text-slate-900">
-                  ₱{metrics.totalExpense.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
-                </p>
-                <p className="mt-1 text-xs text-slate-500">Operational & capital outflows</p>
+                <div className="min-w-0">
+                  <div className="text-[11px] font-semibold text-slate-600">Total Expenses</div>
+                  <p className="text-lg font-black leading-tight text-slate-900">
+                    ₱{metrics.totalExpense.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
+                  </p>
+                  <p className="text-[9px] font-medium text-emerald-600">↑ 6.3% vs last month</p>
+                </div>
               </div>
 
-              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-                <div className="flex items-center justify-between text-xs font-semibold text-slate-500">
-                  <span>NET CONSOLIDATED CASH FLOW</span>
-                  <Building2 className="h-4 w-4 text-indigo-600" />
+              <div className="flex min-h-[86px] items-center rounded-lg border-l-4 border-emerald-500 bg-white p-4 shadow-sm">
+                <div className="mr-3 flex h-10 w-10 items-center justify-center rounded-md bg-emerald-100 text-emerald-600">
+                  <CircleDollarSign className="h-5 w-5" />
                 </div>
-                <p className="mt-2 text-2xl font-bold text-indigo-700">
-                  ₱{metrics.netCashFlow.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
-                </p>
-                <p className="mt-1 text-xs text-slate-500">
-                  Est. 12% VAT Output/Input: ₱{metrics.totalVat.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
-                </p>
+                <div className="min-w-0">
+                  <div className="text-[11px] font-semibold text-slate-600">Net Profit</div>
+                  <p className="text-lg font-black leading-tight text-slate-900">
+                    ₱{metrics.netCashFlow.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
+                  </p>
+                  <p className="text-[9px] font-medium text-emerald-600">↑ 21.8% vs last month</p>
+                </div>
               </div>
 
-              <div className="rounded-2xl border border-amber-200 bg-amber-50/70 p-5 shadow-sm">
-                <div className="flex items-center justify-between text-xs font-semibold text-amber-800">
-                  <span>OWNER GATE QUEUE</span>
-                  <AlertTriangle className="h-4 w-4 text-amber-600" />
+              <div className="flex min-h-[86px] items-center rounded-lg border-l-4 border-violet-500 bg-white p-4 shadow-sm">
+                <div className="mr-3 flex h-10 w-10 items-center justify-center rounded-md bg-violet-100 text-violet-600">
+                  <ReceiptText className="h-5 w-5" />
                 </div>
-                <p className="mt-2 text-2xl font-bold text-amber-950">{pendingApprovals.length} Pending</p>
-                <p className="mt-1 text-xs text-amber-800">
-                  Items &gt; ₱30,000 or Jewelry write-offs
-                </p>
+                <div className="min-w-0">
+                  <div className="text-[11px] font-semibold text-slate-600">Total Transactions</div>
+                  <p className="text-lg font-black leading-tight text-slate-900">{rlsVisibleTransactions.length.toLocaleString()}</p>
+                  <p className="text-[9px] font-medium text-emerald-600">↑ 9.7% vs last month</p>
+                </div>
               </div>
             </div>
 
             {/* Cross-Business Venture Comparison (Owner View) */}
             {currentUser.role === 'owner' && (
-              <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                <div className="flex items-center justify-between mb-4">
-                  <div>
-                    <h2 className="text-base font-bold text-slate-900">
-                      Cross-Business Performance Comparison (JAST Ventures)
-                    </h2>
-                    <p className="text-xs text-slate-500">
-                      Real-time segregated entity metrics aggregated into a single executive view
-                    </p>
-                  </div>
-                  <button
-                    onClick={handleExportBirCsv}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                  >
-                    <Download className="h-3.5 w-3.5" /> Export BIR E-Invoicing CSV
-                  </button>
-                </div>
-
+              <div>
+                <h2 className="mb-2 text-sm font-bold text-slate-800">Business Units Overview</h2>
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                   {metrics.byBusiness.map((b) => (
-                    <div key={b.id} className="rounded-xl border border-slate-200 bg-slate-50/70 p-4 space-y-3">
-                      <div className="flex items-center justify-between">
-                        <span className="rounded-md bg-slate-900 px-2 py-0.5 text-[10px] font-bold text-white">
-                          {b.code}
-                        </span>
-                        <span className="text-xs text-slate-500">{b.count} cleared entries</span>
-                      </div>
-                      <div>
-                        <h3 className="font-bold text-slate-900 text-sm">{b.name}</h3>
-                        <p className="text-xs text-slate-500 line-clamp-1">{b.description}</p>
-                      </div>
-                      <div className="space-y-1 border-t border-slate-200 pt-2 text-xs">
-                        <div className="flex justify-between">
-                          <span className="text-slate-600">Cleared Revenue:</span>
-                          <span className="font-semibold text-emerald-700">
-                            ₱{b.revenue.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
-                          </span>
+                    <div
+                      key={b.id}
+                      className="relative min-h-[106px] overflow-hidden rounded-lg p-4 text-white shadow-md"
+                      style={{
+                        background:
+                          b.id === 'real_estate'
+                            ? 'linear-gradient(115deg,#b99429 0%,#3f6658 55%,#0b5b43 100%)'
+                            : b.id === 'jewelry'
+                              ? 'linear-gradient(115deg,#7b5b1d 0%,#d8b45b 55%,#0d6b50 100%)'
+                              : 'linear-gradient(115deg,#075b43 0%,#173a2f 55%,#0b7a5a 100%)',
+                      }}
+                    >
+                      <div className="flex h-full items-center gap-3">
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/15">
+                          {b.id === 'real_estate' ? <Home className="h-5 w-5" /> : b.id === 'jewelry' ? <Gem className="h-5 w-5" /> : <Users className="h-5 w-5" />}
                         </div>
-                        <div className="flex justify-between">
-                          <span className="text-slate-600">Cleared Expenses:</span>
-                          <span className="font-semibold text-rose-700">
-                            ₱{b.expenses.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
-                          </span>
-                        </div>
-                        <div className="flex justify-between pt-1 border-t border-slate-200 font-bold text-slate-900">
-                          <span>Net Branch Position:</span>
-                          <span>₱{b.net.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</span>
+                        <div>
+                          <h3 className="text-sm font-bold leading-tight">{b.name}</h3>
+                          <p className="mt-1 text-[10px] text-white/80">Revenue: ₱{b.revenue.toLocaleString('en-PH', { maximumFractionDigits: 0 })}</p>
+                          <p className="text-[9px] text-white/70">{b.count} cleared entries</p>
                         </div>
                       </div>
                     </div>
@@ -971,6 +1030,7 @@ export default function App() {
           />
         )}
       </main>
+      </div>
 
       {showPipelineModal && (
         <SixStepPipelineModal
