@@ -1285,26 +1285,14 @@ export default function App() {
               });
             }}
             onPropertyBooking={async (propertyName, address, startDate, endDate, monthlyRent, customerName) => {
-              if (monthlyRent <= 0) return true;
-              const referenceNo = `JAST-RE-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`;
-              const gateRequired = monthlyRent > BUSINESS_UNITS.find((unit) => unit.id === 'real_estate')!.approvalThreshold;
-              return handleAddTransaction({
-                referenceNo,
-                businessId: 'real_estate',
-                txType: 'INCOME',
-                category: 'Property Reservation & Downpayment',
-                counterpartyName: customerName,
-                description: `Property booking: ${propertyName}, ${address} (${startDate} to ${endDate}); monthly rent ${monthlyRent.toLocaleString('en-PH', { style: 'currency', currency: 'PHP' })}`,
-                amount: monthlyRent,
-                vatAmount: Number(((monthlyRent / 1.12) * 0.12).toFixed(2)),
-                reconciled: false,
-                status: gateRequired ? 'PENDING_APPROVAL' : 'APPROVED',
-                gateReason: gateRequired
-                  ? 'Exceeds ₱30,000.00 automated threshold'
-                  : 'Auto-cleared within branch operational limit',
-                submittedBy: currentUser.name,
-                txDate: startDate,
-              });
+              // The two-month property deposit is recorded on the booking and excluded from ledger revenue.
+              void propertyName;
+              void address;
+              void startDate;
+              void endDate;
+              void monthlyRent;
+              void customerName;
+              return true;
             }}
             onJewelryReturn={() => { void loadLedger(); }}
           />

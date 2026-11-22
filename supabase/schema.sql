@@ -171,6 +171,7 @@ CREATE TABLE public.property_bookings (
     end_date DATE NOT NULL,
     customer_name TEXT NOT NULL,
     monthly_rent NUMERIC(14, 2) NOT NULL CHECK (monthly_rent >= 0),
+    deposit_amount NUMERIC(14, 2) NOT NULL DEFAULT 0 CHECK (deposit_amount >= 0),
     status TEXT NOT NULL DEFAULT 'confirmed' CHECK (status IN ('confirmed', 'cancelled')),
     processed_by UUID NOT NULL REFERENCES public.user_profiles(id),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

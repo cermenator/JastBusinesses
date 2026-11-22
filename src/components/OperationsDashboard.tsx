@@ -34,6 +34,7 @@ interface PropertyBookingRecord {
   endDate: string;
   customerName: string;
   monthlyRent: number;
+  depositAmount: number;
   processedBy: string;
   status: 'confirmed' | 'cancelled';
 }
@@ -383,6 +384,7 @@ export const OperationsDashboard: React.FC<Props> = ({
         endDate: row.end_date,
         customerName: row.customer_name,
         monthlyRent: Number(row.monthly_rent),
+        depositAmount: Number(row.deposit_amount ?? Number(row.monthly_rent) * 2),
         processedBy: row.processed_by,
         status: row.status,
       }));
@@ -741,6 +743,7 @@ export const OperationsDashboard: React.FC<Props> = ({
       return;
     }
     const customerName = propertyBookingForm.customerName.trim() || 'Walk-in Customer';
+    const depositAmount = property.monthlyRent * 2;
     try {
       const { error } = await supabase!.from('property_bookings').insert({
         property_id: property.id,
@@ -748,6 +751,7 @@ export const OperationsDashboard: React.FC<Props> = ({
         end_date: propertyBookingForm.endDate,
         customer_name: customerName,
         monthly_rent: property.monthlyRent,
+        deposit_amount: depositAmount,
         processed_by: authUserId,
       });
       if (error) throw new Error(error.message);
@@ -766,7 +770,7 @@ export const OperationsDashboard: React.FC<Props> = ({
     if (!(await refreshData())) return;
     setPropertyBookingForm({ propertyId: '', startDate: TODAY, endDate: '', customerName: '' });
     setActiveForm(null);
-    if (!ledgerSaved) setMessage('Property booking was saved to Supabase, but its revenue entry could not be saved. Check the ledger error and retry.');
+    if (!ledgerSaved) setMessage('Property booking was saved to Supabase, but the booking follow-up could not be completed.');
   };
 
   const addBooking = async () => {
@@ -998,6 +1002,7 @@ export const OperationsDashboard: React.FC<Props> = ({
                   </div>
                   <p className="mt-1 flex items-start gap-1.5 text-xs text-slate-600"><MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0" />{property.address}</p>
                   <p className="mt-3 text-sm font-bold text-indigo-700">{money(property.monthlyRent)} <span className="text-xs font-normal text-slate-500">/ month</span></p>
+                  <p className="mt-1 text-xs font-semibold text-slate-700">2-month deposit: <span className="text-indigo-700">{money(property.monthlyRent * 2)}</span></p>
                   {property.details && <p className="mt-1 text-xs text-slate-500">{property.details}</p>}
                 </article>
               ))}
@@ -1016,7 +1021,10 @@ export const OperationsDashboard: React.FC<Props> = ({
                   <label><span className={labelClass}>Available property</span><select className={inputClass} value={propertyBookingForm.propertyId} onChange={(e) => setPropertyBookingForm({ ...propertyBookingForm, propertyId: e.target.value })}><option value="">Select a property</option>{availableProperties.map((property) => <option key={property.id} value={property.id}>{property.name} — {money(property.monthlyRent)}/month</option>)}</select></label>
                   <label><span className={labelClass}>Customer / tenant name</span><input className={inputClass} value={propertyBookingForm.customerName} onChange={(e) => setPropertyBookingForm({ ...propertyBookingForm, customerName: e.target.value })} /></label>
                   <div className="flex items-center justify-between gap-2 sm:col-span-2 lg:col-span-4">
-                    <span className="text-xs text-slate-600">Monthly rent: <strong>{money(selectedProperty?.monthlyRent || 0)}</strong></span>
+                    <span className="text-xs text-slate-600">
+                      Monthly rent: <strong>{money(selectedProperty?.monthlyRent || 0)}</strong>
+                      <span className="ml-3">2-month deposit: <strong className="text-indigo-700">{money((selectedProperty?.monthlyRent || 0) * 2)}</strong></span>
+                    </span>
                     <div className="flex gap-2"><button onClick={addPropertyBooking} className="rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white">Save property booking</button><button onClick={() => setActiveForm(null)} className="rounded-lg border border-slate-300 px-4 py-2 text-xs">Cancel</button></div>
                   </div>
                 </div>
@@ -1034,7 +1042,7 @@ export const OperationsDashboard: React.FC<Props> = ({
                         }`}>
                           {booking.status === 'cancelled' ? 'Cancelled' : 'Confirmed'}
                         </span>
-                        <p className="mt-1 text-slate-500">{booking.customerName} • {money(booking.monthlyRent)}/month • {booking.processedBy}</p>
+                        <p className="mt-1 text-slate-500">{booking.customerName} • {money(booking.monthlyRent)}/month • 2-month deposit: {money(booking.depositAmount)} • {booking.processedBy}</p>
                       </div>
                       {isOwner && booking.status === 'confirmed' && booking.endDate >= TODAY && (
                         <button
