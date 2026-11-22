@@ -245,29 +245,38 @@ export default function App() {
   // Aggregate financial KPIs
   const metrics = useMemo(() => {
     const approved = rlsVisibleTransactions.filter((t) => t.status === 'APPROVED');
-    const totalIncome = approved
-      .filter((t) => t.txType === 'INCOME')
+    const returnedSales = rlsVisibleTransactions.filter((t) => t.status === 'CANCELLED' && t.txType === 'INCOME');
+    const refundExpenses = approved.filter((t) => t.category === 'Jewelry Sales Return / Refund');
+    const recognizedIncome = [...approved.filter((t) => t.txType === 'INCOME'), ...returnedSales];
+    const refundsTotal = refundExpenses.reduce((acc, t) => acc + t.amount, 0);
+    const totalIncome = recognizedIncome
       .reduce((acc, t) => acc + t.amount, 0);
     const totalExpense = approved
-      .filter((t) => t.txType !== 'INCOME')
+      .filter((t) => t.txType !== 'INCOME' && t.category !== 'Jewelry Sales Return / Refund')
       .reduce((acc, t) => acc + t.amount, 0);
-    const netCashFlow = totalIncome - totalExpense;
-    const totalVat = approved.reduce((acc, t) => acc + t.vatAmount, 0);
+    const netRevenue = totalIncome - refundsTotal;
+    const netCashFlow = netRevenue - totalExpense;
+    const totalVat = [...approved, ...returnedSales].reduce((acc, t) => acc + t.vatAmount, 0);
 
     const byBusiness = BUSINESS_UNITS.map((unit) => {
-      const unitTxs = approved.filter((t) => t.businessId === unit.id);
-      const rev = unitTxs.filter((t) => t.txType === 'INCOME').reduce((a, b) => a + b.amount, 0);
-      const exp = unitTxs.filter((t) => t.txType !== 'INCOME').reduce((a, b) => a + b.amount, 0);
+      const unitTxs = rlsVisibleTransactions.filter((t) =>
+        t.businessId === unit.id && (t.status === 'APPROVED' || t.status === 'CANCELLED')
+      );
+      const rev = unitTxs.filter((t) => t.txType === 'INCOME').reduce((a, b) => a + b.amount, 0) -
+        unitTxs.filter((t) => t.status === 'APPROVED' && t.category === 'Jewelry Sales Return / Refund').reduce((a, b) => a + b.amount, 0);
+      const exp = unitTxs
+        .filter((t) => t.status === 'APPROVED' && t.txType !== 'INCOME' && t.category !== 'Jewelry Sales Return / Refund')
+        .reduce((a, b) => a + b.amount, 0);
       return {
         ...unit,
         revenue: rev,
         expenses: exp,
         net: rev - exp,
-        count: unitTxs.length,
+        count: approved.filter((t) => t.businessId === unit.id).length,
       };
     });
 
-    return { totalIncome, totalExpense, netCashFlow, totalVat, byBusiness };
+    return { totalIncome: netRevenue, totalExpense, netCashFlow, totalVat, byBusiness };
   }, [rlsVisibleTransactions]);
 
   const handleAddTransaction = async (
@@ -651,7 +660,7 @@ export default function App() {
                   <BarChart3 className="h-5 w-5" />
                 </div>
                 <div className="min-w-0">
-                  <div className="text-[11px] font-semibold text-slate-600">Total Revenue</div>
+                  <div className="text-[11px] font-semibold text-slate-600">Net Revenue</div>
                   <p className="text-lg font-black leading-tight text-slate-900">
                     ₱{metrics.totalIncome.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
                   </p>
@@ -664,7 +673,7 @@ export default function App() {
                   <Layers className="h-5 w-5" />
                 </div>
                 <div className="min-w-0">
-                  <div className="text-[11px] font-semibold text-slate-600">Total Expenses</div>
+                  <div className="text-[11px] font-semibold text-slate-600">Operating Expenses</div>
                   <p className="text-lg font-black leading-tight text-slate-900">
                     ₱{metrics.totalExpense.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
                   </p>
@@ -904,10 +913,12 @@ export default function App() {
                       </td>
                       <td
                         className={`px-4 py-3 text-right font-bold ${
-                          tx.txType === 'INCOME' ? 'text-emerald-700' : 'text-slate-900'
+                          tx.status === 'CANCELLED'
+                            ? 'text-slate-500 line-through'
+                            : tx.txType === 'INCOME' ? 'text-emerald-700' : 'text-slate-900'
                         }`}
                       >
-                        {tx.txType === 'INCOME' ? '+' : '-'}₱
+                        {tx.status === 'CANCELLED' ? '' : tx.txType === 'INCOME' ? '+' : '-'}₱
                         {tx.amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
                       </td>
                       <td className="px-4 py-3">
@@ -924,6 +935,11 @@ export default function App() {
                         {tx.status === 'REJECTED' && (
                           <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2.5 py-0.5 font-semibold text-rose-800">
                             <XCircle className="h-3 w-3" /> REJECTED
+                          </span>
+                        )}
+                        {tx.status === 'CANCELLED' && (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-slate-200 px-2.5 py-0.5 font-semibold text-slate-700">
+                            <XCircle className="h-3 w-3" /> CANCELLED
                           </span>
                         )}
                       </td>
@@ -946,7 +962,7 @@ export default function App() {
                 </h2>
               </div>
               <p className="text-xs text-slate-500 mt-0.5">
-                Append-only PostgreSQL trigger ledger recording every insert, approval, and rejection.
+                Append-only PostgreSQL trigger ledger recording inserts, approvals, rejections, and cancellations.
               </p>
             </div>
             <div className="overflow-x-auto">

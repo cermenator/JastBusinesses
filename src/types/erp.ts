@@ -4,7 +4,7 @@ export type UserRole = 'owner' | 'branch_manager' | 'bookkeeper' | 'staff';
 
 export type TransactionType = 'INCOME' | 'EXPENSE' | 'INVENTORY_WRITEOFF' | 'ASSET_TRANSFER';
 
-export type TransactionStatus = 'DRAFT' | 'PENDING_APPROVAL' | 'APPROVED' | 'REJECTED';
+export type TransactionStatus = 'DRAFT' | 'PENDING_APPROVAL' | 'APPROVED' | 'REJECTED' | 'CANCELLED';
 
 export interface BusinessUnit {
   id: BusinessId;
@@ -51,7 +51,7 @@ export interface AuditLogEntry {
   transactionId: string;
   referenceNo: string;
   businessId: BusinessId;
-  action: 'INSERT' | 'APPROVE' | 'REJECT' | 'RECONCILE' | 'UPDATE';
+  action: 'INSERT' | 'APPROVE' | 'REJECT' | 'RECONCILE' | 'UPDATE' | 'CANCEL';
   actorName: string;
   oldStatus: TransactionStatus | null;
   newStatus: TransactionStatus;

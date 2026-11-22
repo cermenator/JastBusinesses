@@ -29,7 +29,7 @@ Apply `supabase/schema.sql` in the configured Supabase project's SQL Editor. In 
 
 For an existing Supabase project, also apply `supabase/cancel_booking_rls.sql` to allow owner-only booking cancellations while retaining the booking records.
 
-For an existing Supabase project, apply `supabase/jewelry_returns.sql` to enable owner-only full jewelry sale returns within seven days. Returns restore stock and add a refund expense to the ledger; the actual customer payment must be completed separately.
+For an existing Supabase project, reapply the latest `supabase/jewelry_returns.sql` in the Supabase SQL Editor. It links eligible historical POS sales to their unique ledger transactions, enables owner-only full jewelry sale returns within seven days, marks the original sale cancelled in the immutable audit trail, restores stock, and records the refund against net revenue. If an old sale has no unique matching ledger entry, the migration leaves it unlinked and the app reports that instead of cancelling an unrelated transaction. The actual customer payment must be completed separately.
 
 The app reads `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` from `.env`. Restart the Vite server after changing these values. The anon key is intended for browser use; never put a Supabase service-role key in a `VITE_` variable. Older browser-local records are not imported automatically; an owner can use the dashboard's **Import saved browser data** action to copy this browser's saved catalogs, photos, bookings, sales, and transactions into Supabase. The local copy is preserved. Historical browser audit rows are not imported because the Supabase audit table is append-only; Supabase records the import actions as new audit events.
 

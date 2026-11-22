@@ -21,7 +21,7 @@ const COLORS: Record<BusinessId, string> = {
   jewelry: '#8b5cf6',
 };
 
-const money = (amount: number) => `₱${amount.toLocaleString('en-PH', { maximumFractionDigits: 0 })}`;
+const money = (amount: number) => `${amount < 0 ? '-₱' : '₱'}${Math.abs(amount).toLocaleString('en-PH', { maximumFractionDigits: 0 })}`;
 const monthKey = (date: Date) => `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
 const dayKey = (date: Date) => date.toISOString().slice(0, 10);
 
@@ -31,10 +31,12 @@ function LineChart({ labels, series, currency = true }: { labels: string[]; seri
   const padding = { top: 18, right: 18, bottom: 38, left: 62 };
   const plotWidth = width - padding.left - padding.right;
   const plotHeight = height - padding.top - padding.bottom;
-  const maxValue = Math.max(1, ...series.flatMap((item) => item.values));
-  const tickStep = maxValue / 4;
+  const allValues = series.flatMap((item) => item.values);
+  const minValue = Math.min(0, ...allValues);
+  const maxValue = Math.max(1, ...allValues);
+  const valueRange = maxValue - minValue;
   const pointX = (index: number) => padding.left + (labels.length < 2 ? plotWidth / 2 : (index / (labels.length - 1)) * plotWidth);
-  const pointY = (value: number) => padding.top + plotHeight - (value / maxValue) * plotHeight;
+  const pointY = (value: number) => padding.top + plotHeight - ((value - minValue) / valueRange) * plotHeight;
   const labelStep = Math.max(1, Math.ceil(labels.length / 6));
 
   if (!labels.length || !series.length) {
@@ -45,7 +47,7 @@ function LineChart({ labels, series, currency = true }: { labels: string[]; seri
     <div className="w-full overflow-x-auto">
       <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Trend chart" className="h-[260px] min-w-[560px] w-full">
         {[0, 1, 2, 3, 4].map((tick) => {
-          const value = tickStep * tick;
+          const value = minValue + (valueRange / 4) * tick;
           const y = pointY(value);
           return (
             <g key={tick}>
@@ -103,10 +105,14 @@ export const ReportsAnalytics: React.FC<Props> = ({ transactions, initialBusines
     () => transactions.filter((tx) => businessScope === 'ALL' || tx.businessId === businessScope),
     [transactions, businessScope]
   );
-  const approvedTransactions = useMemo(
-    () => filteredTransactions.filter((tx) => tx.status === 'APPROVED'),
+  const reportTransactions = useMemo(
+    () => filteredTransactions.filter((tx) => tx.status === 'APPROVED' || tx.status === 'CANCELLED'),
     [filteredTransactions]
   );
+  const refundTransactions = reportTransactions.filter(
+    (tx) => tx.status === 'APPROVED' && tx.category === 'Jewelry Sales Return / Refund'
+  );
+  const isRefund = (tx: TransactionRecord) => tx.category === 'Jewelry Sales Return / Refund';
   const now = new Date();
   const dailyLabels = useMemo(() => Array.from({ length: 30 }, (_, index) => {
     const date = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - 29 + index));
@@ -123,56 +129,57 @@ export const ReportsAnalytics: React.FC<Props> = ({ transactions, initialBusines
   const dailyRevenueSeries = scopeBusinesses.map((unit) => ({
     name: unit.name.replace('JAST ', ''),
     color: COLORS[unit.id],
-    values: dailyLabels.map(({ key }) => approvedTransactions
-      .filter((tx) => tx.businessId === unit.id && tx.txType === 'INCOME' && tx.txDate === key)
-      .reduce((sum, tx) => sum + tx.amount, 0)),
+    values: dailyLabels.map(({ key }) => reportTransactions
+      .filter((tx) => tx.businessId === unit.id && tx.txDate === key)
+      .reduce((sum, tx) => sum + (tx.txType === 'INCOME' ? tx.amount : isRefund(tx) ? -tx.amount : 0), 0)),
   }));
   const dailyTransactionSeries = scopeBusinesses.map((unit) => ({
     name: unit.name.replace('JAST ', ''),
     color: COLORS[unit.id],
     values: dailyLabels.map(({ key }) =>
-      approvedTransactions.filter((tx) => tx.businessId === unit.id && tx.txDate === key).length
+      reportTransactions.filter((tx) => tx.businessId === unit.id && tx.txDate === key).length
     ),
   }));
   const monthlyRevenueSeries = scopeBusinesses.map((unit) => ({
     name: unit.name.replace('JAST ', ''),
     color: COLORS[unit.id],
-    values: monthlyLabels.map(({ key }) => approvedTransactions
-      .filter((tx) => tx.businessId === unit.id && tx.txType === 'INCOME' && tx.txDate.slice(0, 7) === key)
-      .reduce((sum, tx) => sum + tx.amount, 0)),
+    values: monthlyLabels.map(({ key }) => reportTransactions
+      .filter((tx) => tx.businessId === unit.id && tx.txDate.slice(0, 7) === key)
+      .reduce((sum, tx) => sum + (tx.txType === 'INCOME' ? tx.amount : isRefund(tx) ? -tx.amount : 0), 0)),
   }));
   const monthlyExpenseSeries = scopeBusinesses.map((unit) => ({
     name: unit.name.replace('JAST ', ''),
     color: COLORS[unit.id],
-    values: monthlyLabels.map(({ key }) => approvedTransactions
-      .filter((tx) => tx.businessId === unit.id && tx.txType !== 'INCOME' && tx.txDate.slice(0, 7) === key)
+    values: monthlyLabels.map(({ key }) => reportTransactions
+      .filter((tx) => tx.businessId === unit.id && tx.txType !== 'INCOME' && !isRefund(tx) && tx.status === 'APPROVED' && tx.txDate.slice(0, 7) === key)
       .reduce((sum, tx) => sum + tx.amount, 0)),
   }));
   const monthlyTransactionSeries = scopeBusinesses.map((unit) => ({
     name: unit.name.replace('JAST ', ''),
     color: COLORS[unit.id],
-    values: monthlyLabels.map(({ key }) => approvedTransactions
+    values: monthlyLabels.map(({ key }) => reportTransactions
       .filter((tx) => tx.businessId === unit.id && tx.txDate.slice(0, 7) === key).length),
   }));
 
-  const summary = approvedTransactions.reduce((totals, tx) => {
+  const summary = reportTransactions.reduce((totals, tx) => {
     if (tx.txType === 'INCOME') totals.revenue += tx.amount;
-    else totals.expenses += tx.amount;
+    else if (tx.status === 'APPROVED' && !isRefund(tx)) totals.expenses += tx.amount;
     return totals;
   }, { revenue: 0, expenses: 0 });
-  const averageTransaction = approvedTransactions.length ? summary.revenue / approvedTransactions.filter((tx) => tx.txType === 'INCOME').length : 0;
-  const categoryRevenue = Object.entries(approvedTransactions.reduce<Record<string, number>>((totals, tx) => {
+  summary.revenue -= refundTransactions.reduce((sum, tx) => sum + tx.amount, 0);
+  const averageTransaction = reportTransactions.length ? summary.revenue / Math.max(1, reportTransactions.filter((tx) => tx.txType === 'INCOME').length) : 0;
+  const categoryRevenue = Object.entries(reportTransactions.reduce<Record<string, number>>((totals, tx) => {
     if (tx.txType === 'INCOME') totals[tx.category] = (totals[tx.category] || 0) + tx.amount;
+    else if (tx.status === 'APPROVED' && isRefund(tx)) totals[tx.category] = (totals[tx.category] || 0) - tx.amount;
     return totals;
   }, {})).sort((a, b) => b[1] - a[1]).slice(0, 6);
-  const maxCategoryRevenue = Math.max(1, ...categoryRevenue.map(([, amount]) => amount));
   const selectedMonthlyRevenue = monthlyLabels.slice(0, -1).map(({ key }) =>
-    approvedTransactions
-      .filter((tx) => tx.txType === 'INCOME' && tx.txDate.slice(0, 7) === key)
-      .reduce((sum, tx) => sum + tx.amount, 0)
+    reportTransactions
+      .filter((tx) => tx.txDate.slice(0, 7) === key)
+      .reduce((sum, tx) => sum + (tx.txType === 'INCOME' ? tx.amount : isRefund(tx) ? -tx.amount : 0), 0)
   );
   const completedMonthsWithRevenue = monthlyLabels.slice(0, -1).filter(({ key }) =>
-    approvedTransactions.some((tx) => tx.txType === 'INCOME' && tx.txDate.slice(0, 7) === key)
+    reportTransactions.some((tx) => (tx.txType === 'INCOME' || isRefund(tx)) && tx.txDate.slice(0, 7) === key)
   ).length;
   const forecast = useMemo(() => {
     if (completedMonthsWithRevenue < 3) return [];
@@ -186,10 +193,15 @@ export const ReportsAnalytics: React.FC<Props> = ({ transactions, initialBusines
       : 0;
     return [1, 2, 3].map((step) => Math.max(0, meanY + slope * (n - 1 + step)));
   }, [completedMonthsWithRevenue, selectedMonthlyRevenue]);
+  const maxCategoryRevenue = Math.max(1, ...categoryRevenue.map(([, amount]) => Math.abs(amount)));
   const completedMonths = monthlyLabels.slice(0, -1);
   const lowestRevenueMonth = completedMonths
-    .map((month, index) => ({ ...month, revenue: monthlyRevenueSeries.reduce((sum, unit) => sum + unit.values[index], 0) }))
-    .filter((month) => month.revenue > 0)
+    .map((month, index) => ({
+      ...month,
+      revenue: monthlyRevenueSeries.reduce((sum, unit) => sum + unit.values[index], 0),
+      hasActivity: reportTransactions.some((tx) => tx.txDate.slice(0, 7) === month.key),
+    }))
+    .filter((month) => month.hasActivity)
     .sort((a, b) => a.revenue - b.revenue)[0];
   const highestRevenueMonth = completedMonths
     .map((month, index) => ({ ...month, revenue: monthlyRevenueSeries.reduce((sum, unit) => sum + unit.values[index], 0) }))
@@ -203,7 +215,7 @@ export const ReportsAnalytics: React.FC<Props> = ({ transactions, initialBusines
       <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
         <div>
           <h2 className="text-xl font-bold text-slate-900">Reports & Analytics</h2>
-          <p className="mt-1 text-xs text-slate-500">Historical performance and planning signals from approved ledger transactions.</p>
+          <p className="mt-1 text-xs text-slate-500">Historical performance with completed jewelry returns deducted from revenue.</p>
         </div>
         <label className="flex items-center gap-2 text-xs font-semibold text-slate-600">
           Business scope
@@ -220,8 +232,8 @@ export const ReportsAnalytics: React.FC<Props> = ({ transactions, initialBusines
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {[
-          { title: 'Approved revenue', value: money(summary.revenue), icon: TrendingUp, color: 'text-emerald-700 bg-emerald-50' },
-          { title: 'Approved expenses', value: money(summary.expenses), icon: ArrowDownRight, color: 'text-orange-700 bg-orange-50' },
+          { title: 'Net revenue (after returns)', value: money(summary.revenue), icon: TrendingUp, color: 'text-emerald-700 bg-emerald-50' },
+          { title: 'Operating expenses', value: money(summary.expenses), icon: ArrowDownRight, color: 'text-orange-700 bg-orange-50' },
           { title: 'Net operating result', value: money(summary.revenue - summary.expenses), icon: BarChart3, color: 'text-blue-700 bg-blue-50' },
           { title: 'Average income transaction', value: money(averageTransaction), icon: ArrowUpRight, color: 'text-violet-700 bg-violet-50' },
         ].map((item) => {
@@ -235,7 +247,7 @@ export const ReportsAnalytics: React.FC<Props> = ({ transactions, initialBusines
         })}
       </div>
 
-      {approvedTransactions.length === 0 ? (
+      {reportTransactions.length === 0 ? (
         <div className="rounded-xl border border-dashed border-slate-300 bg-white p-10 text-center">
           <BarChart3 className="mx-auto h-8 w-8 text-slate-400" />
           <h3 className="mt-3 font-semibold text-slate-800">No approved transactions in this scope yet</h3>
@@ -292,7 +304,7 @@ export const ReportsAnalytics: React.FC<Props> = ({ transactions, initialBusines
                 <CalendarDays className="h-4 w-4 text-[#075b43]" />
                 <div>
                   <h3 className="text-sm font-bold text-slate-800">Revenue by category</h3>
-                  <p className="text-[11px] text-slate-500">Approved income · {scopeLabel}</p>
+                  <p className="text-[11px] text-slate-500">Net income after completed jewelry returns · {scopeLabel}</p>
                 </div>
               </div>
               {categoryRevenue.length ? (
@@ -304,7 +316,10 @@ export const ReportsAnalytics: React.FC<Props> = ({ transactions, initialBusines
                         <span className="shrink-0 font-semibold text-slate-800">{money(amount)}</span>
                       </div>
                       <div className="h-2 rounded-full bg-slate-100">
-                        <div className="h-2 rounded-full bg-[#0b7a5a]" style={{ width: `${(amount / maxCategoryRevenue) * 100}%` }} />
+                        <div
+                          className={`h-2 rounded-full ${amount < 0 ? 'bg-rose-500' : 'bg-[#0b7a5a]'}`}
+                          style={{ width: `${(Math.abs(amount) / maxCategoryRevenue) * 100}%` }}
+                        />
                       </div>
                     </div>
                   ))}
