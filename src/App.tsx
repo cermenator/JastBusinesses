@@ -384,7 +384,7 @@ export default function App() {
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h1 className="text-base font-bold tracking-tight">JAST Business Ventures ERP</h1>
+                <h1 className="text-base font-bold tracking-tight">JAST Business Ventures</h1>
                 <span className="rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] font-semibold text-emerald-300 border border-emerald-500/30">
                   BIR CAS & RLS Ready
                 </span>

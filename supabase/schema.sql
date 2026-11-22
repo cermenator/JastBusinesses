@@ -156,6 +156,12 @@ CREATE TABLE public.jewelry_inventory (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+ALTER TABLE public.properties
+    ADD COLUMN IF NOT EXISTS photo_paths TEXT[] NOT NULL DEFAULT '{}';
+
+ALTER TABLE public.jewelry_inventory
+    ADD COLUMN IF NOT EXISTS photo_paths TEXT[] NOT NULL DEFAULT '{}';
+
 CREATE TABLE public.pickleball_courts (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     name TEXT NOT NULL UNIQUE,
@@ -529,14 +535,27 @@ ON CONFLICT (id) DO NOTHING;
 INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 VALUES ('jewelry-images', 'jewelry-images', false, 8388608, ARRAY['image/jpeg', 'image/png', 'image/webp', 'image/gif'])
 ON CONFLICT (id) DO UPDATE
-SET file_size_limit = EXCLUDED.file_size_limit,
+SET name = EXCLUDED.name,
+    public = EXCLUDED.public,
+    file_size_limit = EXCLUDED.file_size_limit,
     allowed_mime_types = EXCLUDED.allowed_mime_types;
 
 INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 VALUES ('property-images', 'property-images', false, 8388608, ARRAY['image/jpeg', 'image/png', 'image/webp', 'image/gif'])
 ON CONFLICT (id) DO UPDATE
-SET file_size_limit = EXCLUDED.file_size_limit,
-allowed_mime_types = EXCLUDED.allowed_mime_types;
+SET name = EXCLUDED.name,
+    public = EXCLUDED.public,
+    file_size_limit = EXCLUDED.file_size_limit,
+    allowed_mime_types = EXCLUDED.allowed_mime_types;
+
+DROP POLICY IF EXISTS "Real estate staff can view property photos" ON storage.objects;
+DROP POLICY IF EXISTS "Jasmin uploads property photos" ON storage.objects;
+DROP POLICY IF EXISTS "Jasmin updates property photos" ON storage.objects;
+DROP POLICY IF EXISTS "Jasmin deletes property photos" ON storage.objects;
+DROP POLICY IF EXISTS "Jewelry staff can view jewelry photos" ON storage.objects;
+DROP POLICY IF EXISTS "Jasmin uploads jewelry photos" ON storage.objects;
+DROP POLICY IF EXISTS "Jasmin updates jewelry photos" ON storage.objects;
+DROP POLICY IF EXISTS "Jasmin deletes jewelry photos" ON storage.objects;
 
 CREATE POLICY "Real estate staff can view property photos"
 ON storage.objects FOR SELECT TO authenticated
