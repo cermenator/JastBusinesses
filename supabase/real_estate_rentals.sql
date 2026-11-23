@@ -289,6 +289,37 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION public.record_and_confirm_property_payment(
+    p_booking_id UUID,
+    p_amount NUMERIC,
+    p_rent_amount NUMERIC,
+    p_deposit_amount NUMERIC,
+    p_received_on DATE DEFAULT CURRENT_DATE
+)
+RETURNS UUID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_payment_id UUID;
+BEGIN
+    IF NOT public.is_jasmin_owner() THEN
+        RAISE EXCEPTION 'Only an owner can record and confirm a property payment.';
+    END IF;
+
+    v_payment_id := public.record_property_payment(
+        p_booking_id,
+        p_amount,
+        p_rent_amount,
+        p_deposit_amount,
+        p_received_on
+    );
+    PERFORM public.confirm_property_payment(v_payment_id);
+    RETURN v_payment_id;
+END;
+$$;
+
 CREATE OR REPLACE FUNCTION public.reject_property_payment(p_payment_id UUID)
 RETURNS VOID
 LANGUAGE plpgsql
@@ -492,12 +523,14 @@ $$;
 
 REVOKE ALL ON FUNCTION public.record_property_payment(UUID, NUMERIC, NUMERIC, NUMERIC, DATE) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.confirm_property_payment(UUID) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.record_and_confirm_property_payment(UUID, NUMERIC, NUMERIC, NUMERIC, DATE) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.reject_property_payment(UUID) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.request_property_checkout(UUID, NUMERIC, TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.approve_property_checkout(UUID) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.reject_property_checkout(UUID) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.record_property_payment(UUID, NUMERIC, NUMERIC, NUMERIC, DATE) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.confirm_property_payment(UUID) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.record_and_confirm_property_payment(UUID, NUMERIC, NUMERIC, NUMERIC, DATE) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.reject_property_payment(UUID) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.request_property_checkout(UUID, NUMERIC, TEXT) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.approve_property_checkout(UUID) TO authenticated;

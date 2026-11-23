@@ -399,6 +399,11 @@ export const OperationsDashboard: React.FC<Props> = ({
   const [photoError, setPhotoError] = useState('');
   const [paymentBookingId, setPaymentBookingId] = useState<string | null>(null);
   const [savingPropertyPaymentId, setSavingPropertyPaymentId] = useState<string | null>(null);
+  const [propertyPaymentFeedback, setPropertyPaymentFeedback] = useState<{
+    bookingId: string;
+    tone: 'error' | 'warning' | 'success';
+    text: string;
+  } | null>(null);
   const [paymentForm, setPaymentForm] = useState({ amount: '', rentAmount: '', depositAmount: '' });
   const [checkoutBookingId, setCheckoutBookingId] = useState<string | null>(null);
   const [checkoutForm, setCheckoutForm] = useState({ damageAmount: '0', inspectionNotes: '' });
@@ -950,47 +955,45 @@ export const OperationsDashboard: React.FC<Props> = ({
     if (![amount, rentAmount, depositAmount].every(Number.isFinite) ||
       amount <= 0 || rentAmount < 0 || depositAmount < 0 ||
       cents(rentAmount + depositAmount) !== cents(amount)) {
-      setMessage('Enter the amount received and allocate it exactly between rent and deposit.');
+      const text = 'Enter the amount received and allocate it exactly between rent and deposit.';
+      setPropertyPaymentFeedback({ bookingId: booking.id, tone: 'error', text });
+      setMessage(text);
       return;
     }
+    setPropertyPaymentFeedback(null);
     setSavingPropertyPaymentId(booking.id);
     try {
-      let paymentId: string;
       try {
-        const { data: recordedPaymentId, error } = await supabase!.rpc('record_property_payment', {
-          p_booking_id: booking.id,
-          p_amount: cents(amount),
-          p_rent_amount: cents(rentAmount),
-          p_deposit_amount: cents(depositAmount),
-          p_received_on: TODAY,
-        });
+        const { error } = await supabase!.rpc(
+          isOwner ? 'record_and_confirm_property_payment' : 'record_property_payment',
+          {
+            p_booking_id: booking.id,
+            p_amount: cents(amount),
+            p_rent_amount: cents(rentAmount),
+            p_deposit_amount: cents(depositAmount),
+            p_received_on: TODAY,
+          }
+        );
         if (error) throw new Error(error.message);
-        if (!recordedPaymentId) throw new Error('Supabase did not return the recorded payment ID.');
-        paymentId = recordedPaymentId;
       } catch (error) {
-        setMessage(`Could not record property payment: ${error instanceof Error ? error.message : 'Supabase could not be reached.'}`);
+        const text = `Could not record property payment: ${error instanceof Error ? error.message : 'Supabase could not be reached.'}`;
+        setPropertyPaymentFeedback({ bookingId: booking.id, tone: 'error', text });
+        setMessage(text);
         return;
-      }
-
-      if (isOwner) {
-        try {
-          const { error } = await supabase!.rpc('confirm_property_payment', { p_payment_id: paymentId });
-          if (error) throw new Error(error.message);
-        } catch (error) {
-          setPaymentBookingId(null);
-          setPaymentForm({ amount: '', rentAmount: '', depositAmount: '' });
-          await refreshData();
-          setMessage(`Payment was recorded but could not be confirmed; it remains pending owner confirmation. ${error instanceof Error ? error.message : 'Supabase could not be reached.'}`);
-          return;
-        }
       }
 
       setPaymentBookingId(null);
       setPaymentForm({ amount: '', rentAmount: '', depositAmount: '' });
-      await refreshData();
-      setMessage(isOwner
+      const text = isOwner
         ? 'Payment recorded and confirmed. Rent income was recorded and the booking is active.'
-        : 'Payment recorded and waiting for owner confirmation. Rent and deposit balances update after confirmation.');
+        : 'Payment recorded and waiting for owner confirmation. Rent and deposit balances update after confirmation.';
+      setPropertyPaymentFeedback({ bookingId: booking.id, tone: 'success', text });
+      setMessage(text);
+      if (!(await refreshData())) {
+        const refreshWarning = `${text} The view could not refresh from Supabase; reload to verify the updated balances.`;
+        setPropertyPaymentFeedback({ bookingId: booking.id, tone: 'warning', text: refreshWarning });
+        setMessage(refreshWarning);
+      }
     } finally {
       setSavingPropertyPaymentId(null);
     }
@@ -1381,6 +1384,7 @@ export const OperationsDashboard: React.FC<Props> = ({
                           {(booking.status === 'pending_payment' || booking.status === 'confirmed') && (
                             <button type="button" onClick={() => {
                               setPaymentBookingId(paymentBookingId === booking.id ? null : booking.id);
+                              setPropertyPaymentFeedback(null);
                               setPaymentForm({ amount: '', rentAmount: '', depositAmount: '' });
                             }} className="rounded-md border border-indigo-200 px-2.5 py-1.5 font-semibold text-indigo-700 hover:bg-indigo-50">Record payment</button>
                           )}
@@ -1403,9 +1407,24 @@ export const OperationsDashboard: React.FC<Props> = ({
                           <label><span className={labelClass}>Total received</span><input type="number" min="0.01" step="0.01" className={inputClass} value={paymentForm.amount} onChange={(e) => setPaymentForm({ ...paymentForm, amount: e.target.value })} /></label>
                           <label><span className={labelClass}>Allocate to rent</span><input type="number" min="0" step="0.01" className={inputClass} value={paymentForm.rentAmount} onChange={(e) => setPaymentForm({ ...paymentForm, rentAmount: e.target.value })} /></label>
                           <label><span className={labelClass}>Allocate to deposit</span><input type="number" min="0" step="0.01" className={inputClass} value={paymentForm.depositAmount} onChange={(e) => setPaymentForm({ ...paymentForm, depositAmount: e.target.value })} /></label>
-                          <div className="flex items-end gap-2"><button type="button" disabled={savingPropertyPaymentId === booking.id} onClick={() => { void recordPropertyPayment(booking); }} className="rounded-lg bg-indigo-600 px-3 py-2 font-semibold text-white disabled:cursor-wait disabled:opacity-60">{savingPropertyPaymentId === booking.id ? 'Saving payment...' : isOwner ? 'Record & confirm payment' : 'Submit for owner confirmation'}</button><button type="button" disabled={savingPropertyPaymentId === booking.id} onClick={() => setPaymentBookingId(null)} className="rounded-lg border border-slate-300 px-3 py-2 disabled:opacity-60">Close</button></div>
-                          <p className="text-slate-600 sm:col-span-4">Split the receipt manually. Deposit collections are held separately and are not rent income.</p>
+                          <div className="flex items-end gap-2"><button type="button" disabled={savingPropertyPaymentId === booking.id} onClick={() => { void recordPropertyPayment(booking); }} className="rounded-lg bg-indigo-600 px-3 py-2 font-semibold text-white disabled:cursor-wait disabled:opacity-60">{savingPropertyPaymentId === booking.id ? 'Saving payment...' : isOwner ? booking.status === 'pending_payment' ? 'Confirm booking & payment' : 'Confirm payment' : 'Submit for owner confirmation'}</button><button type="button" disabled={savingPropertyPaymentId === booking.id} onClick={() => setPaymentBookingId(null)} className="rounded-lg border border-slate-300 px-3 py-2 disabled:opacity-60">Close</button></div>
+                          <p className="text-slate-600 sm:col-span-4">{isOwner ? 'Confirming saves the payment and rent/deposit allocation together; a pending booking becomes active.' : 'Split the receipt manually. The owner must confirm it; deposit collections are held separately and are not rent income.'}</p>
                         </div>
+                      )}
+
+                      {propertyPaymentFeedback?.bookingId === booking.id && (
+                        <p
+                          role={propertyPaymentFeedback.tone === 'error' ? 'alert' : 'status'}
+                          className={`rounded-lg px-3 py-2 ${
+                            propertyPaymentFeedback.tone === 'success'
+                              ? 'bg-emerald-50 text-emerald-800'
+                              : propertyPaymentFeedback.tone === 'warning'
+                                ? 'bg-amber-50 text-amber-800'
+                                : 'bg-rose-50 text-rose-800'
+                          }`}
+                        >
+                          {propertyPaymentFeedback.text}
+                        </p>
                       )}
 
                       {checkoutBookingId === booking.id && (
