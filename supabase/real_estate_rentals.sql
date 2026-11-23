@@ -41,7 +41,7 @@ ALTER TABLE public.property_bookings
     CHECK (end_date IS NULL OR end_date >= start_date);
 
 CREATE TABLE IF NOT EXISTS public.property_payments (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     property_booking_id UUID NOT NULL REFERENCES public.property_bookings(id),
     amount NUMERIC(14, 2) NOT NULL CHECK (amount > 0),
     rent_amount NUMERIC(14, 2) NOT NULL CHECK (rent_amount >= 0),
@@ -59,7 +59,7 @@ CREATE INDEX IF NOT EXISTS property_payments_booking_status_idx
 ON public.property_payments(property_booking_id, status);
 
 CREATE TABLE IF NOT EXISTS public.property_checkouts (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     property_booking_id UUID NOT NULL UNIQUE REFERENCES public.property_bookings(id),
     damage_amount NUMERIC(14, 2) NOT NULL CHECK (damage_amount >= 0),
     deposit_refund_amount NUMERIC(14, 2) CHECK (deposit_refund_amount >= 0),
@@ -71,6 +71,10 @@ CREATE TABLE IF NOT EXISTS public.property_checkouts (
     approved_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+ALTER TABLE public.property_payments
+    ALTER COLUMN id SET DEFAULT gen_random_uuid();
+ALTER TABLE public.property_checkouts
+    ALTER COLUMN id SET DEFAULT gen_random_uuid();
 
 ALTER TABLE public.property_payments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.property_checkouts ENABLE ROW LEVEL SECURITY;
@@ -173,7 +177,7 @@ AS $$
 DECLARE
     v_booking public.property_bookings%ROWTYPE;
     v_deposit_reserved NUMERIC(14, 2);
-    v_payment_id UUID := uuid_generate_v4();
+    v_payment_id UUID := gen_random_uuid();
 BEGIN
     IF auth.uid() IS NULL OR NOT public.has_business_access('real_estate') THEN
         RAISE EXCEPTION 'Real estate access is required to record a payment.';
@@ -270,7 +274,7 @@ BEGIN
         FROM public.user_profiles
         WHERE id = v_payment.recorded_by;
         v_reference_no := 'JAST-RE-' || TO_CHAR(NOW(), 'YYYY') || '-' ||
-            UPPER(SUBSTRING(REPLACE(uuid_generate_v4()::TEXT, '-', '') FROM 1 FOR 6));
+            UPPER(SUBSTRING(REPLACE(gen_random_uuid()::TEXT, '-', '') FROM 1 FOR 6));
 
         INSERT INTO public.transactions (
             reference_no, business_id, tx_type, category, counterparty_name,
@@ -354,7 +358,7 @@ DECLARE
     v_booking public.property_bookings%ROWTYPE;
     v_deposit_paid NUMERIC(14, 2);
     v_checkout public.property_checkouts%ROWTYPE;
-    v_checkout_id UUID := uuid_generate_v4();
+    v_checkout_id UUID := gen_random_uuid();
 BEGIN
     IF auth.uid() IS NULL OR NOT public.has_business_access('real_estate') THEN
         RAISE EXCEPTION 'Real estate access is required to submit a checkout inspection.';
@@ -481,7 +485,7 @@ BEGIN
         FROM public.properties
         WHERE id = v_booking.property_id;
         v_reference_no := 'JAST-RE-' || TO_CHAR(NOW(), 'YYYY') || '-' ||
-            UPPER(SUBSTRING(REPLACE(uuid_generate_v4()::TEXT, '-', '') FROM 1 FOR 6));
+            UPPER(SUBSTRING(REPLACE(gen_random_uuid()::TEXT, '-', '') FROM 1 FOR 6));
 
         INSERT INTO public.transactions (
             reference_no, business_id, tx_type, category, counterparty_name,
