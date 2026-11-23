@@ -34,7 +34,7 @@ interface PropertyBookingRecord {
   endDate: string | null;
   customerName: string;
   monthlyRent: number;
-  depositRequired: number;
+  depositAmount: number;
   processedBy: string;
   status: 'pending_payment' | 'confirmed' | 'cancelled' | 'checked_out';
 }
@@ -287,7 +287,7 @@ function propertyRentBalance(
     rentBilled,
     rentBalance: cents(rentBilled - rentPaid),
     rentAdvance: cents(Math.max(0, rentPaid - rentBilled)),
-    depositBalance: cents(Math.max(0, booking.depositRequired - depositPaid)),
+    depositBalance: cents(Math.max(0, booking.depositAmount - depositPaid)),
     overdueBalance,
     firstUnpaid,
     daysOverdue,
@@ -524,7 +524,7 @@ export const OperationsDashboard: React.FC<Props> = ({
         endDate: row.end_date,
         customerName: row.customer_name,
         monthlyRent: Number(row.monthly_rent),
-        depositRequired: Number(row.deposit_required || 0),
+        depositAmount: Number(row.deposit_amount ?? Number(row.monthly_rent) * 2),
         processedBy: row.processed_by,
         status: row.status,
       }));
@@ -919,6 +919,7 @@ export const OperationsDashboard: React.FC<Props> = ({
       return;
     }
     const customerName = propertyBookingForm.customerName.trim() || 'Walk-in Customer';
+    const depositAmount = property.monthlyRent * 2;
     try {
       const { error } = await supabase!.from('property_bookings').insert({
         property_id: property.id,
@@ -926,7 +927,7 @@ export const OperationsDashboard: React.FC<Props> = ({
         end_date: propertyBookingForm.openEnded ? null : propertyBookingForm.endDate,
         customer_name: customerName,
         monthly_rent: property.monthlyRent,
-        deposit_required: cents(property.monthlyRent * 2),
+        deposit_amount: depositAmount,
         status: 'pending_payment',
         processed_by: authUserId,
       });
@@ -1265,6 +1266,7 @@ export const OperationsDashboard: React.FC<Props> = ({
                   </div>
                   <p className="mt-1 flex items-start gap-1.5 text-xs text-slate-600"><MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0" />{property.address}</p>
                   <p className="mt-3 text-sm font-bold text-indigo-700">{money(property.monthlyRent)} <span className="text-xs font-normal text-slate-500">/ month</span></p>
+                  <p className="mt-1 text-xs font-semibold text-slate-700">2-month deposit: <span className="text-indigo-700">{money(property.monthlyRent * 2)}</span></p>
                   {property.details && <p className="mt-1 text-xs text-slate-500">{property.details}</p>}
                   {data.propertyBookings
                     .filter((booking) =>
@@ -1310,7 +1312,11 @@ export const OperationsDashboard: React.FC<Props> = ({
                   <label><span className={labelClass}>Available property</span><select className={inputClass} value={propertyBookingForm.propertyId} onChange={(e) => setPropertyBookingForm({ ...propertyBookingForm, propertyId: e.target.value })}><option value="">Select a property</option>{availableProperties.map((property) => <option key={property.id} value={property.id}>{property.name} — {money(property.monthlyRent)}/month</option>)}</select></label>
                   <label><span className={labelClass}>Customer / tenant name</span><input className={inputClass} value={propertyBookingForm.customerName} onChange={(e) => setPropertyBookingForm({ ...propertyBookingForm, customerName: e.target.value })} /></label>
                   <div className="flex items-center justify-between gap-2 sm:col-span-2 lg:col-span-4">
-                    <span className="text-xs text-slate-600">Monthly rent: <strong>{money(selectedProperty?.monthlyRent || 0)}</strong> · Refundable deposit: <strong>{money((selectedProperty?.monthlyRent || 0) * 2)}</strong> · Rent is prorated for the move-in month</span>
+                    <span className="text-xs text-slate-600">
+                      Monthly rent: <strong>{money(selectedProperty?.monthlyRent || 0)}</strong>
+                      <span className="ml-3">Refundable 2-month deposit: <strong className="text-indigo-700">{money((selectedProperty?.monthlyRent || 0) * 2)}</strong></span>
+                      <span className="ml-3">Rent is prorated for the move-in month</span>
+                    </span>
                     <div className="flex gap-2"><button onClick={addPropertyBooking} className="rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white">Save property booking</button><button onClick={() => setActiveForm(null)} className="rounded-lg border border-slate-300 px-4 py-2 text-xs">Cancel</button></div>
                   </div>
                 </div>
@@ -1333,12 +1339,12 @@ export const OperationsDashboard: React.FC<Props> = ({
                             : booking.status === 'checked_out' ? 'Checked out'
                               : booking.status === 'confirmed' ? 'Confirmed' : 'Cancelled'}
                         </span>
-                        <p className="mt-1 text-slate-500">{booking.customerName} • {money(booking.monthlyRent)}/month • Deposit {money(booking.depositRequired)} • {booking.processedBy}</p>
+                        <p className="mt-1 text-slate-500">{booking.customerName} • {money(booking.monthlyRent)}/month • 2-month deposit: {money(booking.depositAmount)} • {booking.processedBy}</p>
                         {(() => {
                           const balance = propertyRentBalance(booking, data.propertyPayments);
                           return (
                             <p className="mt-1 text-slate-600">
-                              Rent paid {money(balance.rentPaid)} · Rent balance {money(Math.max(0, balance.rentBalance))} · Deposit paid {money(balance.depositPaid)} / {money(booking.depositRequired)} (balance {money(balance.depositBalance)})
+                              Rent paid {money(balance.rentPaid)} · Rent balance {money(Math.max(0, balance.rentBalance))} · Deposit paid {money(balance.depositPaid)} / {money(booking.depositAmount)} (balance {money(balance.depositBalance)})
                               {balance.rentAdvance > 0 && <span className="ml-1 font-semibold text-emerald-700">· Advance rent {money(balance.rentAdvance)}</span>}
                               {balance.overdueBalance > 0 && <span className="ml-1 font-semibold text-rose-700">· Overdue {money(balance.overdueBalance)} ({balance.daysOverdue} days)</span>}
                               {balance.firstUnpaid && !balance.daysOverdue && <span className="ml-1 font-semibold text-amber-700">· Rent due {balance.firstUnpaid.dueDate}</span>}

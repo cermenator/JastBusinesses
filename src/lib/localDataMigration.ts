@@ -33,6 +33,7 @@ interface LegacyPropertyBooking {
   endDate: string;
   customerName: string;
   monthlyRent: number;
+  depositAmount?: number;
 }
 
 interface LegacyCourtBooking {
@@ -376,7 +377,7 @@ export async function migrateLegacyBrowserData(userId: string, userName: string)
         end_date: booking.endDate,
         customer_name: booking.customerName,
         monthly_rent: booking.monthlyRent,
-        deposit_required: Math.round(booking.monthlyRent * 200) / 100,
+        deposit_amount: booking.depositAmount ?? booking.monthlyRent * 2,
         status: 'confirmed',
         processed_by: userId,
       }).select('id').single();

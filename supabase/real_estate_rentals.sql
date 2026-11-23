@@ -13,11 +13,27 @@ ALTER TABLE public.property_bookings
 ALTER TABLE public.property_bookings
     ALTER COLUMN status SET DEFAULT 'pending_payment';
 ALTER TABLE public.property_bookings
-    ADD COLUMN IF NOT EXISTS deposit_required NUMERIC(14, 2) NOT NULL DEFAULT 0
-    CHECK (deposit_required >= 0);
+    ADD COLUMN IF NOT EXISTS deposit_amount NUMERIC(14, 2);
 UPDATE public.property_bookings
-SET deposit_required = monthly_rent * 2
-WHERE deposit_required = 0;
+SET deposit_amount = monthly_rent * 2
+WHERE deposit_amount IS NULL OR deposit_amount = 0;
+ALTER TABLE public.property_bookings
+    ALTER COLUMN deposit_amount SET DEFAULT 0,
+    ALTER COLUMN deposit_amount SET NOT NULL;
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'property_bookings_deposit_amount_check'
+          AND conrelid = 'public.property_bookings'::regclass
+    ) THEN
+        ALTER TABLE public.property_bookings
+        ADD CONSTRAINT property_bookings_deposit_amount_check
+        CHECK (deposit_amount >= 0);
+    END IF;
+END;
+$$;
 ALTER TABLE public.property_bookings
     DROP CONSTRAINT IF EXISTS property_bookings_date_range_check;
 ALTER TABLE public.property_bookings
@@ -193,7 +209,7 @@ BEGIN
     FROM public.property_payments
     WHERE property_booking_id = p_booking_id
       AND status IN ('pending_confirmation', 'confirmed');
-    IF v_deposit_reserved + p_deposit_amount > v_booking.deposit_required THEN
+    IF v_deposit_reserved + p_deposit_amount > v_booking.deposit_amount THEN
         RAISE EXCEPTION 'Deposit allocation exceeds the required deposit balance.';
     END IF;
 
