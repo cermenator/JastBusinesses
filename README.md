@@ -18,7 +18,7 @@ Full-stack prototype and production blueprint for **Development of an Integrated
 The React app includes an Operations view for:
 
 - Ma'am Jasmin Taurak to add and edit property addresses and monthly rents, jewelry inventory with multiple photos, unit costs, selling prices and stock counts, and pickleball courts.
-- Real Estate bookings can be open-ended or fixed-term. Staff record partial rent/deposit receipts for owner confirmation; confirmed rent updates the balance and ledger, while the two-month refundable deposit is tracked separately. Rent is prorated for the move-in month and due on the first of each later month. Property cards show outstanding/overdue rent, days overdue, or advance rent.
+- Real Estate bookings can be open-ended or fixed-term. Staff record partial rent/deposit receipts for owner confirmation; owners can record and confirm their own receipts in one step. Confirmed rent updates the balance and ledger, while the two-month refundable deposit is tracked separately. Rent is prorated for the move-in month and due on the first of each later month. Property cards show outstanding/overdue rent, days overdue, or advance rent.
 - Staff submit move-out inspections and damage deductions for owner approval. Approval records the damage deduction as revenue, ends the booking, and records the remaining deposit refund; the actual cash refund must be issued as part of that owner-confirmed checkout.
 - Court bookings retain date/time conflict checks, and Jewelry sales remain pending until owner approval.
 - A Supabase-authenticated staff account can be assigned access to real estate, pickleball, and jewelry.

@@ -398,6 +398,7 @@ export const OperationsDashboard: React.FC<Props> = ({
   const [editingCatalogId, setEditingCatalogId] = useState<string | null>(null);
   const [photoError, setPhotoError] = useState('');
   const [paymentBookingId, setPaymentBookingId] = useState<string | null>(null);
+  const [savingPropertyPaymentId, setSavingPropertyPaymentId] = useState<string | null>(null);
   const [paymentForm, setPaymentForm] = useState({ amount: '', rentAmount: '', depositAmount: '' });
   const [checkoutBookingId, setCheckoutBookingId] = useState<string | null>(null);
   const [checkoutForm, setCheckoutForm] = useState({ damageAmount: '0', inspectionNotes: '' });
@@ -952,23 +953,47 @@ export const OperationsDashboard: React.FC<Props> = ({
       setMessage('Enter the amount received and allocate it exactly between rent and deposit.');
       return;
     }
+    setSavingPropertyPaymentId(booking.id);
     try {
-      const { error } = await supabase!.rpc('record_property_payment', {
-        p_booking_id: booking.id,
-        p_amount: cents(amount),
-        p_rent_amount: cents(rentAmount),
-        p_deposit_amount: cents(depositAmount),
-        p_received_on: TODAY,
-      });
-      if (error) throw new Error(error.message);
-    } catch (error) {
-      setMessage(`Could not record property payment: ${error instanceof Error ? error.message : 'Supabase could not be reached.'}`);
-      return;
+      let paymentId: string;
+      try {
+        const { data: recordedPaymentId, error } = await supabase!.rpc('record_property_payment', {
+          p_booking_id: booking.id,
+          p_amount: cents(amount),
+          p_rent_amount: cents(rentAmount),
+          p_deposit_amount: cents(depositAmount),
+          p_received_on: TODAY,
+        });
+        if (error) throw new Error(error.message);
+        if (!recordedPaymentId) throw new Error('Supabase did not return the recorded payment ID.');
+        paymentId = recordedPaymentId;
+      } catch (error) {
+        setMessage(`Could not record property payment: ${error instanceof Error ? error.message : 'Supabase could not be reached.'}`);
+        return;
+      }
+
+      if (isOwner) {
+        try {
+          const { error } = await supabase!.rpc('confirm_property_payment', { p_payment_id: paymentId });
+          if (error) throw new Error(error.message);
+        } catch (error) {
+          setPaymentBookingId(null);
+          setPaymentForm({ amount: '', rentAmount: '', depositAmount: '' });
+          await refreshData();
+          setMessage(`Payment was recorded but could not be confirmed; it remains pending owner confirmation. ${error instanceof Error ? error.message : 'Supabase could not be reached.'}`);
+          return;
+        }
+      }
+
+      setPaymentBookingId(null);
+      setPaymentForm({ amount: '', rentAmount: '', depositAmount: '' });
+      await refreshData();
+      setMessage(isOwner
+        ? 'Payment recorded and confirmed. Rent income was recorded and the booking is active.'
+        : 'Payment recorded and waiting for owner confirmation. Rent and deposit balances update after confirmation.');
+    } finally {
+      setSavingPropertyPaymentId(null);
     }
-    setPaymentBookingId(null);
-    setPaymentForm({ amount: '', rentAmount: '', depositAmount: '' });
-    await refreshData();
-    setMessage('Payment recorded and waiting for owner confirmation. Rent and deposit balances update after confirmation.');
   };
 
   const decidePropertyPayment = async (payment: PropertyPaymentRecord, decision: 'confirm' | 'reject') => {
@@ -1378,7 +1403,7 @@ export const OperationsDashboard: React.FC<Props> = ({
                           <label><span className={labelClass}>Total received</span><input type="number" min="0.01" step="0.01" className={inputClass} value={paymentForm.amount} onChange={(e) => setPaymentForm({ ...paymentForm, amount: e.target.value })} /></label>
                           <label><span className={labelClass}>Allocate to rent</span><input type="number" min="0" step="0.01" className={inputClass} value={paymentForm.rentAmount} onChange={(e) => setPaymentForm({ ...paymentForm, rentAmount: e.target.value })} /></label>
                           <label><span className={labelClass}>Allocate to deposit</span><input type="number" min="0" step="0.01" className={inputClass} value={paymentForm.depositAmount} onChange={(e) => setPaymentForm({ ...paymentForm, depositAmount: e.target.value })} /></label>
-                          <div className="flex items-end gap-2"><button type="button" onClick={() => { void recordPropertyPayment(booking); }} className="rounded-lg bg-indigo-600 px-3 py-2 font-semibold text-white">Submit for owner confirmation</button><button type="button" onClick={() => setPaymentBookingId(null)} className="rounded-lg border border-slate-300 px-3 py-2">Close</button></div>
+                          <div className="flex items-end gap-2"><button type="button" disabled={savingPropertyPaymentId === booking.id} onClick={() => { void recordPropertyPayment(booking); }} className="rounded-lg bg-indigo-600 px-3 py-2 font-semibold text-white disabled:cursor-wait disabled:opacity-60">{savingPropertyPaymentId === booking.id ? 'Saving payment...' : isOwner ? 'Record & confirm payment' : 'Submit for owner confirmation'}</button><button type="button" disabled={savingPropertyPaymentId === booking.id} onClick={() => setPaymentBookingId(null)} className="rounded-lg border border-slate-300 px-3 py-2 disabled:opacity-60">Close</button></div>
                           <p className="text-slate-600 sm:col-span-4">Split the receipt manually. Deposit collections are held separately and are not rent income.</p>
                         </div>
                       )}
