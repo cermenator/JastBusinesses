@@ -62,6 +62,11 @@ BEGIN
     ELSIF NEW.business_id = 'jewelry' THEN
         NEW.status := 'PENDING_APPROVAL';
         NEW.gate_reason := 'All jewelry transactions require Owner authorization';
+    ELSIF NEW.business_id = 'real_estate'
+       AND NEW.category IN ('Property Rent Collection', 'Property Deposit Damage Charge')
+       AND public.is_jasmin_owner() THEN
+        NEW.status := 'APPROVED';
+        NEW.gate_reason := 'Owner-confirmed property receipt';
     ELSIF v_threshold IS NULL THEN
         NEW.status := 'APPROVED';
         NEW.gate_reason := 'Auto-cleared within branch operational limit';

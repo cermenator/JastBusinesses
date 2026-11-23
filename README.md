@@ -18,7 +18,9 @@ Full-stack prototype and production blueprint for **Development of an Integrated
 The React app includes an Operations view for:
 
 - Ma'am Jasmin Taurak to add and edit property addresses and monthly rents, jewelry inventory with multiple photos, unit costs, selling prices and stock counts, and pickleball courts.
-- Staff to record property lease bookings with date-overlap checks, court bookings with time-conflict checks, and jewelry sale requests. A Jewelry sale is completed and stock reduced only after owner approval.
+- Real Estate bookings can be open-ended or fixed-term. Staff record partial rent/deposit receipts for owner confirmation; confirmed rent updates the balance and ledger, while the two-month refundable deposit is tracked separately. Rent is prorated for the move-in month and due on the first of each later month. Property cards show outstanding/overdue rent, days overdue, or advance rent.
+- Staff submit move-out inspections and damage deductions for owner approval. Approval records the damage deduction as revenue, ends the booking, and records the remaining deposit refund; the actual cash refund must be issued as part of that owner-confirmed checkout.
+- Court bookings retain date/time conflict checks, and Jewelry sales remain pending until owner approval.
 - A Supabase-authenticated staff account can be assigned access to real estate, pickleball, and jewelry.
 
 The app does not seed sample business records; it displays the data available to the authenticated user in Supabase. The React app signs users in through Supabase Auth and uses each authenticated user's `user_profiles` role and business access; it does not use a client-side role switcher.
@@ -26,6 +28,8 @@ The app does not seed sample business records; it displays the data available to
 Catalog records, compressed property and jewelry photos, bookings, jewelry sales, transactions, and audit history are stored in Supabase. Photo files use the private `property-images` and `jewelry-images` Storage buckets. Transaction receipts are uploaded to the private `receipt-vault` bucket and can be previewed from the ledger by users with access to that venture. Existing transactions that only saved a receipt filename have no stored file to preview; those receipts must be re-uploaded. The standalone HTML preview remains a static preview of the original dashboard; use the React app for Supabase-backed operations.
 
 Apply `supabase/schema.sql` in the configured Supabase project's SQL Editor. Create staff login accounts in Supabase Auth, then use the owner-only **User Accounts** screen to register each Auth UUID, role, and venture access. The screen supports bookkeepers, sales/booking staff, and branch managers; owner accounts must be provisioned separately. Users sign in with their Supabase email and password.
+
+For a new project, apply `supabase/real_estate_rentals.sql` after `supabase/schema.sql`. For an existing project, apply that migration without rerunning the base schema. Do this before using the Real Estate payment, open-ended stay, and checkout workflow. Existing bookings are assigned a two-month deposit requirement, but historical payments are not inferred from old booking records or ledger entries; reconcile and record their actual rent/deposit payments before relying on their displayed balances. Legacy `Property Reservation & Downpayment` ledger entries are left untouched; review them before recording new rent collections to avoid duplicate income.
 
 For an existing Supabase project, apply `supabase/user_accounts.sql` before using the User Accounts screen.
 

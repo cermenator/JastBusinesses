@@ -376,6 +376,8 @@ export async function migrateLegacyBrowserData(userId: string, userName: string)
         end_date: booking.endDate,
         customer_name: booking.customerName,
         monthly_rent: booking.monthlyRent,
+        deposit_required: Math.round(booking.monthlyRent * 200) / 100,
+        status: 'confirmed',
         processed_by: userId,
       }).select('id').single();
       if (error) throw new Error(`Could not import a property booking: ${error.message}`);

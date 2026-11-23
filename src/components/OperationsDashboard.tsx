@@ -31,11 +31,33 @@ interface PropertyBookingRecord {
   id: string;
   propertyId: string;
   startDate: string;
-  endDate: string;
+  endDate: string | null;
   customerName: string;
   monthlyRent: number;
+  depositRequired: number;
   processedBy: string;
-  status: 'confirmed' | 'cancelled';
+  status: 'pending_payment' | 'confirmed' | 'cancelled' | 'checked_out';
+}
+
+interface PropertyPaymentRecord {
+  id: string;
+  bookingId: string;
+  amount: number;
+  rentAmount: number;
+  depositAmount: number;
+  receivedOn: string;
+  recordedBy: string;
+  status: 'pending_confirmation' | 'confirmed' | 'rejected';
+}
+
+interface PropertyCheckoutRecord {
+  id: string;
+  bookingId: string;
+  damageAmount: number;
+  depositRefund: number | null;
+  inspectionNotes: string;
+  recordedBy: string;
+  status: 'pending_owner_approval' | 'approved' | 'rejected';
 }
 
 interface JewelryItem {
@@ -84,6 +106,8 @@ interface JewelrySaleRecord {
 interface OperationsData {
   properties: PropertyRecord[];
   propertyBookings: PropertyBookingRecord[];
+  propertyPayments: PropertyPaymentRecord[];
+  propertyCheckouts: PropertyCheckoutRecord[];
   jewelry: JewelryItem[];
   courts: CourtRecord[];
   bookings: BookingRecord[];
@@ -96,14 +120,6 @@ interface Props {
   refreshKey: number;
   onJewelrySale: (itemId: string, quantity: number, customerName: string) => Promise<string | null>;
   onCourtBooking: (courtName: string, date: string, amount: number, customerName: string) => Promise<boolean>;
-  onPropertyBooking: (
-    propertyName: string,
-    address: string,
-    startDate: string,
-    endDate: string,
-    monthlyRent: number,
-    customerName: string
-  ) => Promise<boolean>;
   onJewelryReturn: () => void;
 }
 
@@ -111,6 +127,8 @@ const TODAY = new Date().toISOString().slice(0, 10);
 const EMPTY_DATA: OperationsData = {
   properties: [],
   propertyBookings: [],
+  propertyPayments: [],
+  propertyCheckouts: [],
   jewelry: [],
   courts: [],
   bookings: [],
@@ -143,23 +161,39 @@ function jewelryReturnDeadline(soldAt: string): string {
 
 function propertyBookingStatus(bookings: PropertyBookingRecord[], propertyId: string) {
   const upcoming = bookings
-    .filter((booking) => booking.status === 'confirmed' && booking.propertyId === propertyId && booking.endDate >= TODAY)
+    .filter((booking) =>
+      (booking.status === 'pending_payment' || booking.status === 'confirmed') &&
+      booking.propertyId === propertyId &&
+      (!booking.endDate || booking.endDate >= TODAY)
+    )
     .sort((a, b) => a.startDate.localeCompare(b.startDate));
   const ranges = upcoming.reduce<Array<{ startDate: string; endDate: string }>>((merged, booking) => {
     const lastRange = merged[merged.length - 1];
-    if (lastRange && booking.startDate <= addOneDay(lastRange.endDate)) {
-      if (booking.endDate > lastRange.endDate) lastRange.endDate = booking.endDate;
+    const endDate = booking.endDate || '9999-12-31';
+    if (lastRange && (
+      lastRange.endDate === '9999-12-31' ||
+      booking.startDate <= addOneDay(lastRange.endDate)
+    )) {
+      if (endDate > lastRange.endDate) lastRange.endDate = endDate;
     } else {
-      merged.push({ startDate: booking.startDate, endDate: booking.endDate });
+      merged.push({ startDate: booking.startDate, endDate });
     }
     return merged;
   }, []);
 
   const currentBooking = ranges.find((range) => range.startDate <= TODAY && range.endDate >= TODAY);
   if (currentBooking) {
+    const activeBooking = upcoming.find((booking) =>
+      booking.startDate <= TODAY && (booking.endDate === null || booking.endDate >= TODAY)
+    );
+    if (activeBooking?.status === 'pending_payment') {
+      return { label: 'Pending payment', detail: 'Reserved; awaiting owner payment confirmation', isBooked: true };
+    }
     return {
-      label: 'Booked',
-      detail: `Available from ${formatBookingDate(addOneDay(currentBooking.endDate))}`,
+      label: currentBooking.endDate === '9999-12-31' ? 'Occupied' : 'Booked',
+      detail: currentBooking.endDate === '9999-12-31'
+        ? 'Open-ended stay'
+        : `Available from ${formatBookingDate(addOneDay(currentBooking.endDate))}`,
       isBooked: true,
     };
   }
@@ -178,6 +212,94 @@ function propertyBookingStatus(bookings: PropertyBookingRecord[], propertyId: st
 
 const newId = () => globalThis.crypto?.randomUUID?.() || `record-${Date.now()}-${Math.random()}`;
 const money = (amount: number) => `₱${amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
+const cents = (amount: number) => Math.round((amount + Number.EPSILON) * 100) / 100;
+
+function propertyRentBalance(
+  booking: PropertyBookingRecord,
+  payments: PropertyPaymentRecord[],
+  asOf = TODAY
+) {
+  const confirmedPayments = payments.filter(
+    (payment) => payment.bookingId === booking.id && payment.status === 'confirmed'
+  );
+  const rentPaid = cents(confirmedPayments.reduce((sum, payment) => sum + payment.rentAmount, 0));
+  const depositPaid = cents(confirmedPayments.reduce((sum, payment) => sum + payment.depositAmount, 0));
+  const endDate = booking.endDate && booking.endDate < asOf ? booking.endDate : asOf;
+  const periods: Array<{ dueDate: string; amount: number }> = [];
+  const start = new Date(`${booking.startDate}T00:00:00.000Z`);
+  const end = new Date(`${endDate}T00:00:00.000Z`);
+
+  if ((booking.status === 'confirmed' || booking.status === 'checked_out') && start <= end) {
+    const cursor = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1));
+    while (cursor <= end) {
+      const monthStart = new Date(Date.UTC(cursor.getUTCFullYear(), cursor.getUTCMonth(), 1));
+      const monthEnd = new Date(Date.UTC(cursor.getUTCFullYear(), cursor.getUTCMonth() + 1, 0));
+      const occupiedStart = start > monthStart ? start : monthStart;
+      const bookingEnd = booking.endDate
+        ? new Date(`${booking.endDate}T00:00:00.000Z`)
+        : monthEnd;
+      const occupiedEnd = bookingEnd < monthEnd ? bookingEnd : monthEnd;
+      const dueDate = cursor.getTime() === Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1)
+        ? booking.startDate
+        : monthStart.toISOString().slice(0, 10);
+      if (occupiedStart <= occupiedEnd && dueDate <= asOf) {
+        const occupiedDays = Math.floor((occupiedEnd.getTime() - occupiedStart.getTime()) / 86400000) + 1;
+        const daysInMonth = monthEnd.getUTCDate();
+        periods.push({ dueDate, amount: cents(booking.monthlyRent * occupiedDays / daysInMonth) });
+      }
+      cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+    }
+  }
+
+  const rentBilled = cents(periods.reduce((sum, period) => sum + period.amount, 0));
+  const nextRentDueCandidate = booking.startDate > asOf
+    ? booking.startDate
+    : new Date(Date.UTC(
+      new Date(`${asOf}T00:00:00.000Z`).getUTCFullYear(),
+      new Date(`${asOf}T00:00:00.000Z`).getUTCMonth() + 1,
+      1
+    )).toISOString().slice(0, 10);
+  const nextRentDueDate = booking.status === 'confirmed' &&
+    (!booking.endDate || nextRentDueCandidate <= booking.endDate)
+    ? nextRentDueCandidate
+    : null;
+  let remainingPaid = rentPaid;
+  let firstUnpaid: { dueDate: string; amount: number } | null = null;
+  let overdueBalance = 0;
+  for (const period of periods) {
+    const unpaid = cents(Math.max(0, period.amount - remainingPaid));
+    remainingPaid = cents(Math.max(0, remainingPaid - period.amount));
+    if (unpaid > 0) {
+      firstUnpaid ||= { dueDate: period.dueDate, amount: unpaid };
+      if (period.dueDate < asOf) overdueBalance = cents(overdueBalance + unpaid);
+    }
+  }
+  const daysOverdue = firstUnpaid && firstUnpaid.dueDate < asOf
+    ? Math.floor((
+      new Date(`${asOf}T00:00:00.000Z`).getTime() -
+      new Date(`${firstUnpaid.dueDate}T00:00:00.000Z`).getTime()
+    ) / 86400000)
+    : 0;
+
+  return {
+    rentPaid,
+    depositPaid,
+    rentBilled,
+    rentBalance: cents(rentBilled - rentPaid),
+    rentAdvance: cents(Math.max(0, rentPaid - rentBilled)),
+    depositBalance: cents(Math.max(0, booking.depositRequired - depositPaid)),
+    overdueBalance,
+    firstUnpaid,
+    daysOverdue,
+    nextRentDueDate,
+    daysUntilNextRent: nextRentDueDate
+      ? Math.max(0, Math.floor((
+        new Date(`${nextRentDueDate}T00:00:00.000Z`).getTime() -
+        new Date(`${asOf}T00:00:00.000Z`).getTime()
+      ) / 86400000))
+      : null,
+  };
+}
 
 async function signedPhotoUrls(bucket: string, paths: string[]): Promise<string[]> {
   if (!paths.length) return [];
@@ -263,7 +385,6 @@ export const OperationsDashboard: React.FC<Props> = ({
   refreshKey,
   onJewelrySale,
   onCourtBooking,
-  onPropertyBooking,
   onJewelryReturn,
 }) => {
   const [data, setData] = useState(EMPTY_DATA);
@@ -276,6 +397,10 @@ export const OperationsDashboard: React.FC<Props> = ({
   const [activeForm, setActiveForm] = useState<'property' | 'propertyBooking' | 'jewelry' | 'court' | 'booking' | 'sale' | null>(null);
   const [editingCatalogId, setEditingCatalogId] = useState<string | null>(null);
   const [photoError, setPhotoError] = useState('');
+  const [paymentBookingId, setPaymentBookingId] = useState<string | null>(null);
+  const [paymentForm, setPaymentForm] = useState({ amount: '', rentAmount: '', depositAmount: '' });
+  const [checkoutBookingId, setCheckoutBookingId] = useState<string | null>(null);
+  const [checkoutForm, setCheckoutForm] = useState({ damageAmount: '0', inspectionNotes: '' });
   const isOwner = currentUser.role === 'owner';
   const allowedBusinesses = currentUser.role === 'owner'
     ? ['real_estate', 'pickleball', 'jewelry']
@@ -294,6 +419,7 @@ export const OperationsDashboard: React.FC<Props> = ({
     propertyId: '',
     startDate: TODAY,
     endDate: '',
+    openEnded: true,
     customerName: '',
   });
   const [jewelryForm, setJewelryForm] = useState({
@@ -324,9 +450,21 @@ export const OperationsDashboard: React.FC<Props> = ({
     }
     setLoading(true);
     try {
-      const [propertyResult, propertyBookingResult, jewelryResult, courtResult, bookingResult, saleResult, returnResult] = await Promise.all([
+      const [
+        propertyResult,
+        propertyBookingResult,
+        propertyPaymentResult,
+        propertyCheckoutResult,
+        jewelryResult,
+        courtResult,
+        bookingResult,
+        saleResult,
+        returnResult,
+      ] = await Promise.all([
         supabase.from('properties').select('*').order('created_at', { ascending: false }),
         supabase.from('property_bookings').select('*').order('created_at', { ascending: false }),
+        supabase.from('property_payments').select('*').order('received_on', { ascending: false }),
+        supabase.from('property_checkouts').select('*').order('created_at', { ascending: false }),
         supabase.from('jewelry_inventory').select('*').order('created_at', { ascending: false }),
         supabase.from('pickleball_courts').select('*').order('created_at', { ascending: false }),
         supabase.from('court_bookings').select('*').order('created_at', { ascending: false }),
@@ -336,6 +474,8 @@ export const OperationsDashboard: React.FC<Props> = ({
       for (const [label, result] of [
         ['properties', propertyResult],
         ['property bookings', propertyBookingResult],
+        ['property payments', propertyPaymentResult],
+        ['property checkouts', propertyCheckoutResult],
         ['jewelry inventory', jewelryResult],
         ['pickleball courts', courtResult],
         ['court bookings', bookingResult],
@@ -344,7 +484,8 @@ export const OperationsDashboard: React.FC<Props> = ({
       ] as const) {
         if (result.error) throw new Error(`Could not load ${label} from Supabase: ${result.error.message}`);
       }
-      if (!propertyResult.data || !propertyBookingResult.data || !jewelryResult.data ||
+      if (!propertyResult.data || !propertyBookingResult.data || !propertyPaymentResult.data ||
+        !propertyCheckoutResult.data || !jewelryResult.data ||
         !courtResult.data || !bookingResult.data || !saleResult.data || !returnResult.data) {
         throw new Error('Supabase returned incomplete Operations data.');
       }
@@ -383,7 +524,27 @@ export const OperationsDashboard: React.FC<Props> = ({
         endDate: row.end_date,
         customerName: row.customer_name,
         monthlyRent: Number(row.monthly_rent),
+        depositRequired: Number(row.deposit_required || 0),
         processedBy: row.processed_by,
+        status: row.status,
+      }));
+      const propertyPayments = propertyPaymentResult.data.map((row) => ({
+        id: row.id,
+        bookingId: row.property_booking_id,
+        amount: Number(row.amount),
+        rentAmount: Number(row.rent_amount),
+        depositAmount: Number(row.deposit_amount),
+        receivedOn: row.received_on,
+        recordedBy: row.recorded_by,
+        status: row.status,
+      }));
+      const propertyCheckouts = propertyCheckoutResult.data.map((row) => ({
+        id: row.id,
+        bookingId: row.property_booking_id,
+        damageAmount: Number(row.damage_amount),
+        depositRefund: row.deposit_refund_amount === null ? null : Number(row.deposit_refund_amount),
+        inspectionNotes: row.inspection_notes || '',
+        recordedBy: row.recorded_by,
         status: row.status,
       }));
       const bookings = bookingResult.data.map((row) => ({
@@ -409,7 +570,7 @@ export const OperationsDashboard: React.FC<Props> = ({
         processedBy: row.processed_by,
         returned: returnResult.data.some((returned) => returned.sale_id === row.id),
       }));
-      setData({ properties, propertyBookings, jewelry, courts, bookings, sales });
+      setData({ properties, propertyBookings, propertyPayments, propertyCheckouts, jewelry, courts, bookings, sales });
       setMessage('');
       return true;
     } catch (error) {
@@ -438,8 +599,15 @@ export const OperationsDashboard: React.FC<Props> = ({
       setMessage('Only an owner can cancel a property booking.');
       return;
     }
-    if (booking.status !== 'confirmed' || booking.endDate < TODAY) return;
-    if (!window.confirm(`Cancel the property booking for ${booking.customerName} from ${booking.startDate} to ${booking.endDate}?\n\nThis updates booking availability but does not remove any existing ledger transaction or record a refund.`)) return;
+    if (booking.status !== 'pending_payment' ||
+      (booking.endDate && booking.endDate < TODAY)) return;
+    if (data.propertyPayments.some((payment) =>
+      payment.bookingId === booking.id && payment.status === 'pending_confirmation'
+    )) {
+      setMessage('Confirm or reject the pending payment before cancelling this reservation.');
+      return;
+    }
+    if (!window.confirm(`Cancel the unpaid property reservation for ${booking.customerName} from ${booking.startDate} to ${booking.endDate || 'an open-ended stay'}?`)) return;
     try {
       const { data: updated, error } = await supabase!
         .from('property_bookings')
@@ -529,15 +697,19 @@ export const OperationsDashboard: React.FC<Props> = ({
 
   const propertyAvailableFor = (propertyId: string, startDate: string, endDate: string) =>
     !data.propertyBookings.some((booking) =>
-      booking.status === 'confirmed' &&
+      (booking.status === 'confirmed' || booking.status === 'pending_payment') &&
       booking.propertyId === propertyId &&
-      startDate <= booking.endDate &&
+      startDate <= (booking.endDate || '9999-12-31') &&
       endDate >= booking.startDate
     );
 
   const availableProperties = data.properties.filter((property) =>
-    !propertyBookingForm.endDate ||
-    propertyAvailableFor(property.id, propertyBookingForm.startDate, propertyBookingForm.endDate)
+    !propertyBookingForm.startDate ||
+    propertyAvailableFor(
+      property.id,
+      propertyBookingForm.startDate,
+      propertyBookingForm.openEnded ? '9999-12-31' : propertyBookingForm.endDate
+    )
   );
 
   const handlePhotos = async (files: FileList | null): Promise<string[]> => {
@@ -731,12 +903,18 @@ export const OperationsDashboard: React.FC<Props> = ({
 
   const addPropertyBooking = async () => {
     const property = data.properties.find((item) => item.id === propertyBookingForm.propertyId);
-    if (!property || !propertyBookingForm.startDate || !propertyBookingForm.endDate ||
-      propertyBookingForm.startDate < TODAY || propertyBookingForm.endDate < propertyBookingForm.startDate) {
-      setMessage('Select a property and valid lease start and end dates (start date must be today or later).');
+    if (!property || !propertyBookingForm.startDate ||
+      propertyBookingForm.startDate < TODAY ||
+      (!propertyBookingForm.openEnded &&
+        (!propertyBookingForm.endDate || propertyBookingForm.endDate < propertyBookingForm.startDate))) {
+      setMessage('Select a property, a valid move-in date, and an end date for a fixed-term booking.');
       return;
     }
-    if (!propertyAvailableFor(property.id, propertyBookingForm.startDate, propertyBookingForm.endDate)) {
+    if (!propertyAvailableFor(
+      property.id,
+      propertyBookingForm.startDate,
+      propertyBookingForm.openEnded ? '9999-12-31' : propertyBookingForm.endDate
+    )) {
       setMessage('This property already has a booking during those dates. Choose another property or date range.');
       return;
     }
@@ -745,9 +923,11 @@ export const OperationsDashboard: React.FC<Props> = ({
       const { error } = await supabase!.from('property_bookings').insert({
         property_id: property.id,
         start_date: propertyBookingForm.startDate,
-        end_date: propertyBookingForm.endDate,
+        end_date: propertyBookingForm.openEnded ? null : propertyBookingForm.endDate,
         customer_name: customerName,
         monthly_rent: property.monthlyRent,
+        deposit_required: cents(property.monthlyRent * 2),
+        status: 'pending_payment',
         processed_by: authUserId,
       });
       if (error) throw new Error(error.message);
@@ -755,18 +935,105 @@ export const OperationsDashboard: React.FC<Props> = ({
       setMessage(`Could not save property booking to Supabase: ${error instanceof Error ? error.message : 'Supabase could not be reached.'}`);
       return;
     }
-    const ledgerSaved = await onPropertyBooking(
-        property.name,
-        property.address,
-        propertyBookingForm.startDate,
-        propertyBookingForm.endDate,
-        property.monthlyRent,
-        customerName
-      );
     if (!(await refreshData())) return;
-    setPropertyBookingForm({ propertyId: '', startDate: TODAY, endDate: '', customerName: '' });
+    setPropertyBookingForm({ propertyId: '', startDate: TODAY, endDate: '', openEnded: true, customerName: '' });
     setActiveForm(null);
-    if (!ledgerSaved) setMessage('Property booking was saved to Supabase, but its revenue entry could not be saved. Check the ledger error and retry.');
+    setMessage('Property reserved as pending payment. Record the amount received; the owner must confirm it to activate the booking.');
+  };
+
+  const recordPropertyPayment = async (booking: PropertyBookingRecord) => {
+    const amount = Number(paymentForm.amount);
+    const rentAmount = Number(paymentForm.rentAmount);
+    const depositAmount = Number(paymentForm.depositAmount);
+    if (![amount, rentAmount, depositAmount].every(Number.isFinite) ||
+      amount <= 0 || rentAmount < 0 || depositAmount < 0 ||
+      cents(rentAmount + depositAmount) !== cents(amount)) {
+      setMessage('Enter the amount received and allocate it exactly between rent and deposit.');
+      return;
+    }
+    try {
+      const { error } = await supabase!.rpc('record_property_payment', {
+        p_booking_id: booking.id,
+        p_amount: cents(amount),
+        p_rent_amount: cents(rentAmount),
+        p_deposit_amount: cents(depositAmount),
+        p_received_on: TODAY,
+      });
+      if (error) throw new Error(error.message);
+    } catch (error) {
+      setMessage(`Could not record property payment: ${error instanceof Error ? error.message : 'Supabase could not be reached.'}`);
+      return;
+    }
+    setPaymentBookingId(null);
+    setPaymentForm({ amount: '', rentAmount: '', depositAmount: '' });
+    await refreshData();
+    setMessage('Payment recorded and waiting for owner confirmation. Rent and deposit balances update after confirmation.');
+  };
+
+  const decidePropertyPayment = async (payment: PropertyPaymentRecord, decision: 'confirm' | 'reject') => {
+    if (!isOwner) {
+      setMessage('Only an owner can confirm or reject a property payment.');
+      return;
+    }
+    try {
+      const { error } = await supabase!.rpc(
+        decision === 'confirm' ? 'confirm_property_payment' : 'reject_property_payment',
+        { p_payment_id: payment.id }
+      );
+      if (error) throw new Error(error.message);
+    } catch (error) {
+      setMessage(`Could not ${decision} property payment: ${error instanceof Error ? error.message : 'Supabase could not be reached.'}`);
+      return;
+    }
+    await refreshData();
+    setMessage(decision === 'confirm'
+      ? 'Payment confirmed. Rent income was recorded and the booking is active.'
+      : 'Payment rejected. It was excluded from the rent and deposit balances.');
+  };
+
+  const requestPropertyCheckout = async (booking: PropertyBookingRecord) => {
+    const damageAmount = Number(checkoutForm.damageAmount);
+    const balance = propertyRentBalance(booking, data.propertyPayments);
+    if (!Number.isFinite(damageAmount) || damageAmount < 0 || damageAmount > balance.depositPaid) {
+      setMessage(`Damage deductions must be between zero and the confirmed deposit (${money(balance.depositPaid)}).`);
+      return;
+    }
+    try {
+      const { error } = await supabase!.rpc('request_property_checkout', {
+        p_booking_id: booking.id,
+        p_damage_amount: cents(damageAmount),
+        p_inspection_notes: checkoutForm.inspectionNotes.trim(),
+      });
+      if (error) throw new Error(error.message);
+    } catch (error) {
+      setMessage(`Could not submit checkout inspection: ${error instanceof Error ? error.message : 'Supabase could not be reached.'}`);
+      return;
+    }
+    setCheckoutBookingId(null);
+    setCheckoutForm({ damageAmount: '0', inspectionNotes: '' });
+    await refreshData();
+    setMessage('Checkout inspection submitted. The owner must approve the damage charge and deposit refund.');
+  };
+
+  const decidePropertyCheckout = async (checkout: PropertyCheckoutRecord, decision: 'approve' | 'reject') => {
+    if (!isOwner) {
+      setMessage('Only an owner can approve or reject property checkout.');
+      return;
+    }
+    try {
+      const { error } = await supabase!.rpc(
+        decision === 'approve' ? 'approve_property_checkout' : 'reject_property_checkout',
+        { p_checkout_id: checkout.id }
+      );
+      if (error) throw new Error(error.message);
+    } catch (error) {
+      setMessage(`Could not ${decision} property checkout: ${error instanceof Error ? error.message : 'Supabase could not be reached.'}`);
+      return;
+    }
+    await refreshData();
+    setMessage(decision === 'approve'
+      ? 'Checkout approved. Damage deductions were recorded as revenue and the remaining deposit refund was recorded.'
+      : 'Checkout inspection rejected. The booking remains active.');
   };
 
   const addBooking = async () => {
@@ -999,6 +1266,32 @@ export const OperationsDashboard: React.FC<Props> = ({
                   <p className="mt-1 flex items-start gap-1.5 text-xs text-slate-600"><MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0" />{property.address}</p>
                   <p className="mt-3 text-sm font-bold text-indigo-700">{money(property.monthlyRent)} <span className="text-xs font-normal text-slate-500">/ month</span></p>
                   {property.details && <p className="mt-1 text-xs text-slate-500">{property.details}</p>}
+                  {data.propertyBookings
+                    .filter((booking) =>
+                      booking.propertyId === property.id &&
+                      (booking.status === 'pending_payment' || booking.status === 'confirmed') &&
+                      booking.startDate <= TODAY &&
+                      (!booking.endDate || booking.endDate >= TODAY)
+                    )
+                    .slice(0, 1)
+                    .map((booking) => {
+                      const balance = propertyRentBalance(booking, data.propertyPayments);
+                      return (
+                        <div key={booking.id} className="mt-3 rounded-lg bg-slate-50 p-3 text-xs">
+                          <p className="font-semibold text-slate-800">{booking.customerName} · {booking.status === 'pending_payment' ? 'Awaiting first payment confirmation' : 'Current tenant'}</p>
+                          <p className="mt-1 text-slate-600">Rent balance: <strong>{money(Math.max(0, balance.rentBalance))}</strong> · Deposit balance: {money(balance.depositBalance)}</p>
+                          {balance.overdueBalance > 0
+                            ? <p className="mt-1 font-semibold text-rose-700">Owner reminder: collect {money(balance.overdueBalance)} overdue for {balance.daysOverdue} day(s).</p>
+                            : balance.rentAdvance > 0
+                              ? <p className="mt-1 font-semibold text-emerald-700">Advance rent: {money(balance.rentAdvance)}{balance.daysUntilNextRent !== null ? ` · next rent due in ${balance.daysUntilNextRent} day(s)` : ''}.</p>
+                              : balance.firstUnpaid
+                                ? <p className="mt-1 font-semibold text-amber-700">{balance.firstUnpaid.dueDate === TODAY ? 'Rent due today.' : `Rent due ${balance.firstUnpaid.dueDate}.`}</p>
+                                : balance.daysUntilNextRent !== null
+                                  ? <p className="mt-1 text-slate-600">Next rent reminder in {balance.daysUntilNextRent} day(s) ({balance.nextRentDueDate}).</p>
+                                  : null}
+                        </div>
+                      );
+                    })}
                 </article>
               ))}
             </div>
@@ -1012,11 +1305,12 @@ export const OperationsDashboard: React.FC<Props> = ({
               {activeForm === 'propertyBooking' && (
                 <div className="grid gap-3 rounded-xl bg-slate-50 p-4 sm:grid-cols-2 lg:grid-cols-4">
                   <label><span className={labelClass}>Move-in date</span><input type="date" min={TODAY} className={inputClass} value={propertyBookingForm.startDate} onChange={(e) => setPropertyBookingForm({ ...propertyBookingForm, startDate: e.target.value })} /></label>
-                  <label><span className={labelClass}>Lease end date</span><input type="date" min={propertyBookingForm.startDate} className={inputClass} value={propertyBookingForm.endDate} onChange={(e) => setPropertyBookingForm({ ...propertyBookingForm, endDate: e.target.value })} /></label>
+                  <label className="flex items-center gap-2 self-end rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"><input type="checkbox" checked={propertyBookingForm.openEnded} onChange={(e) => setPropertyBookingForm({ ...propertyBookingForm, openEnded: e.target.checked })} /><span>Open-ended stay</span></label>
+                  {!propertyBookingForm.openEnded && <label><span className={labelClass}>Planned lease end date</span><input type="date" min={propertyBookingForm.startDate} className={inputClass} value={propertyBookingForm.endDate} onChange={(e) => setPropertyBookingForm({ ...propertyBookingForm, endDate: e.target.value })} /></label>}
                   <label><span className={labelClass}>Available property</span><select className={inputClass} value={propertyBookingForm.propertyId} onChange={(e) => setPropertyBookingForm({ ...propertyBookingForm, propertyId: e.target.value })}><option value="">Select a property</option>{availableProperties.map((property) => <option key={property.id} value={property.id}>{property.name} — {money(property.monthlyRent)}/month</option>)}</select></label>
                   <label><span className={labelClass}>Customer / tenant name</span><input className={inputClass} value={propertyBookingForm.customerName} onChange={(e) => setPropertyBookingForm({ ...propertyBookingForm, customerName: e.target.value })} /></label>
                   <div className="flex items-center justify-between gap-2 sm:col-span-2 lg:col-span-4">
-                    <span className="text-xs text-slate-600">Monthly rent: <strong>{money(selectedProperty?.monthlyRent || 0)}</strong></span>
+                    <span className="text-xs text-slate-600">Monthly rent: <strong>{money(selectedProperty?.monthlyRent || 0)}</strong> · Refundable deposit: <strong>{money((selectedProperty?.monthlyRent || 0) * 2)}</strong> · Rent is prorated for the move-in month</span>
                     <div className="flex gap-2"><button onClick={addPropertyBooking} className="rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white">Save property booking</button><button onClick={() => setActiveForm(null)} className="rounded-lg border border-slate-300 px-4 py-2 text-xs">Cancel</button></div>
                   </div>
                 </div>
@@ -1024,27 +1318,94 @@ export const OperationsDashboard: React.FC<Props> = ({
               {data.propertyBookings.length > 0 && (
                 <div className="mt-3 divide-y divide-slate-100">
                   {data.propertyBookings.map((booking) => (
-                    <div key={booking.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-xs">
-                      <div>
+                    <div key={booking.id} className="space-y-2 py-3 text-xs">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div>
                         <span className="font-semibold text-slate-800">
-                          {data.properties.find((property) => property.id === booking.propertyId)?.name || 'Property'} • {booking.startDate} to {booking.endDate}
+                          {data.properties.find((property) => property.id === booking.propertyId)?.name || 'Property'} • {booking.startDate} to {booking.endDate || 'Open-ended'}
                         </span>
                         <span className={`ml-2 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                          booking.status === 'cancelled' ? 'bg-slate-100 text-slate-600' : 'bg-emerald-100 text-emerald-800'
+                          booking.status === 'cancelled' || booking.status === 'checked_out' ? 'bg-slate-100 text-slate-600'
+                            : booking.status === 'pending_payment' ? 'bg-amber-100 text-amber-800'
+                              : 'bg-emerald-100 text-emerald-800'
                         }`}>
-                          {booking.status === 'cancelled' ? 'Cancelled' : 'Confirmed'}
+                          {booking.status === 'pending_payment' ? 'Pending payment'
+                            : booking.status === 'checked_out' ? 'Checked out'
+                              : booking.status === 'confirmed' ? 'Confirmed' : 'Cancelled'}
                         </span>
-                        <p className="mt-1 text-slate-500">{booking.customerName} • {money(booking.monthlyRent)}/month • {booking.processedBy}</p>
+                        <p className="mt-1 text-slate-500">{booking.customerName} • {money(booking.monthlyRent)}/month • Deposit {money(booking.depositRequired)} • {booking.processedBy}</p>
+                        {(() => {
+                          const balance = propertyRentBalance(booking, data.propertyPayments);
+                          return (
+                            <p className="mt-1 text-slate-600">
+                              Rent paid {money(balance.rentPaid)} · Rent balance {money(Math.max(0, balance.rentBalance))} · Deposit paid {money(balance.depositPaid)} / {money(booking.depositRequired)} (balance {money(balance.depositBalance)})
+                              {balance.rentAdvance > 0 && <span className="ml-1 font-semibold text-emerald-700">· Advance rent {money(balance.rentAdvance)}</span>}
+                              {balance.overdueBalance > 0 && <span className="ml-1 font-semibold text-rose-700">· Overdue {money(balance.overdueBalance)} ({balance.daysOverdue} days)</span>}
+                              {balance.firstUnpaid && !balance.daysOverdue && <span className="ml-1 font-semibold text-amber-700">· Rent due {balance.firstUnpaid.dueDate}</span>}
+                            </p>
+                          );
+                        })()}
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {(booking.status === 'pending_payment' || booking.status === 'confirmed') && (
+                            <button type="button" onClick={() => {
+                              setPaymentBookingId(paymentBookingId === booking.id ? null : booking.id);
+                              setPaymentForm({ amount: '', rentAmount: '', depositAmount: '' });
+                            }} className="rounded-md border border-indigo-200 px-2.5 py-1.5 font-semibold text-indigo-700 hover:bg-indigo-50">Record payment</button>
+                          )}
+                          {isOwner && booking.status === 'pending_payment' && (
+                            <button type="button" onClick={() => { void cancelPropertyBooking(booking); }} className="inline-flex items-center gap-1 rounded-md border border-rose-200 px-2.5 py-1.5 font-semibold text-rose-700 hover:bg-rose-50">
+                              <Ban className="h-3.5 w-3.5" /> Cancel booking
+                            </button>
+                          )}
+                          {booking.status === 'confirmed' && !data.propertyCheckouts.some((checkout) => checkout.bookingId === booking.id && checkout.status === 'pending_owner_approval') && (
+                            <button type="button" onClick={() => {
+                              setCheckoutBookingId(checkoutBookingId === booking.id ? null : booking.id);
+                              setCheckoutForm({ damageAmount: '0', inspectionNotes: '' });
+                            }} className="rounded-md border border-amber-200 px-2.5 py-1.5 font-semibold text-amber-800 hover:bg-amber-50">Check out & inspect</button>
+                          )}
+                        </div>
                       </div>
-                      {isOwner && booking.status === 'confirmed' && booking.endDate >= TODAY && (
-                        <button
-                          type="button"
-                          onClick={() => { void cancelPropertyBooking(booking); }}
-                          className="inline-flex items-center gap-1 rounded-md border border-rose-200 px-2.5 py-1.5 font-semibold text-rose-700 hover:bg-rose-50"
-                        >
-                          <Ban className="h-3.5 w-3.5" /> Cancel booking
-                        </button>
+
+                      {paymentBookingId === booking.id && (
+                        <div className="grid gap-2 rounded-lg bg-indigo-50 p-3 sm:grid-cols-4">
+                          <label><span className={labelClass}>Total received</span><input type="number" min="0.01" step="0.01" className={inputClass} value={paymentForm.amount} onChange={(e) => setPaymentForm({ ...paymentForm, amount: e.target.value })} /></label>
+                          <label><span className={labelClass}>Allocate to rent</span><input type="number" min="0" step="0.01" className={inputClass} value={paymentForm.rentAmount} onChange={(e) => setPaymentForm({ ...paymentForm, rentAmount: e.target.value })} /></label>
+                          <label><span className={labelClass}>Allocate to deposit</span><input type="number" min="0" step="0.01" className={inputClass} value={paymentForm.depositAmount} onChange={(e) => setPaymentForm({ ...paymentForm, depositAmount: e.target.value })} /></label>
+                          <div className="flex items-end gap-2"><button type="button" onClick={() => { void recordPropertyPayment(booking); }} className="rounded-lg bg-indigo-600 px-3 py-2 font-semibold text-white">Submit for owner confirmation</button><button type="button" onClick={() => setPaymentBookingId(null)} className="rounded-lg border border-slate-300 px-3 py-2">Close</button></div>
+                          <p className="text-slate-600 sm:col-span-4">Split the receipt manually. Deposit collections are held separately and are not rent income.</p>
+                        </div>
                       )}
+
+                      {checkoutBookingId === booking.id && (
+                        <div className="grid gap-2 rounded-lg bg-amber-50 p-3 sm:grid-cols-3">
+                          <label><span className={labelClass}>Damage deduction from deposit</span><input type="number" min="0" max={propertyRentBalance(booking, data.propertyPayments).depositPaid} step="0.01" className={inputClass} value={checkoutForm.damageAmount} onChange={(e) => setCheckoutForm({ ...checkoutForm, damageAmount: e.target.value })} /></label>
+                          <label className="sm:col-span-2"><span className={labelClass}>Inspection notes</span><input className={inputClass} value={checkoutForm.inspectionNotes} onChange={(e) => setCheckoutForm({ ...checkoutForm, inspectionNotes: e.target.value })} /></label>
+                          <p className="text-slate-600 sm:col-span-2">Refund due after inspection: <strong>{money(Math.max(0, propertyRentBalance(booking, data.propertyPayments).depositPaid - (Number(checkoutForm.damageAmount) || 0)))}</strong>. Any rent balance remains separate.</p>
+                          <button type="button" onClick={() => { void requestPropertyCheckout(booking); }} className="rounded-lg bg-amber-700 px-3 py-2 font-semibold text-white">Submit inspection to owner</button>
+                        </div>
+                      )}
+
+                      {data.propertyPayments.filter((payment) => payment.bookingId === booking.id).map((payment) => (
+                        <div key={payment.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-100 px-3 py-2">
+                          <span>{payment.receivedOn} · Received {money(payment.amount)} (rent {money(payment.rentAmount)}, deposit {money(payment.depositAmount)}) · {payment.status.replace('_', ' ')}</span>
+                          {isOwner && payment.status === 'pending_confirmation' && <span className="flex gap-2">
+                            <button type="button" onClick={() => { void decidePropertyPayment(payment, 'confirm'); }} className="font-semibold text-emerald-700">Confirm</button>
+                            <button type="button" onClick={() => { void decidePropertyPayment(payment, 'reject'); }} className="font-semibold text-rose-700">Reject</button>
+                          </span>}
+                        </div>
+                      ))}
+
+                      {data.propertyCheckouts.filter((checkout) => checkout.bookingId === booking.id).map((checkout) => (
+                        <div key={checkout.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-100 bg-amber-50 px-3 py-2">
+                          <span>Checkout inspection · Damage {money(checkout.damageAmount)} · {checkout.inspectionNotes || 'No notes'} · {checkout.status.replace(/_/g, ' ')}</span>
+                          {isOwner && checkout.status === 'pending_owner_approval' && <span className="flex gap-2">
+                            <button type="button" onClick={() => { void decidePropertyCheckout(checkout, 'approve'); }} className="font-semibold text-emerald-700">Approve checkout & record refund</button>
+                            <button type="button" onClick={() => { void decidePropertyCheckout(checkout, 'reject'); }} className="font-semibold text-rose-700">Reject</button>
+                          </span>}
+                          {checkout.status === 'approved' && checkout.depositRefund !== null && <span>Refund recorded: {money(checkout.depositRefund)}</span>}
+                        </div>
+                      ))}
                     </div>
                   ))}
                 </div>

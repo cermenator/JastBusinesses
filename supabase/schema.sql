@@ -168,13 +168,15 @@ CREATE TABLE public.property_bookings (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     property_id UUID NOT NULL REFERENCES public.properties(id),
     start_date DATE NOT NULL,
-    end_date DATE NOT NULL,
+    end_date DATE,
     customer_name TEXT NOT NULL,
     monthly_rent NUMERIC(14, 2) NOT NULL CHECK (monthly_rent >= 0),
-    status TEXT NOT NULL DEFAULT 'confirmed' CHECK (status IN ('confirmed', 'cancelled')),
+    deposit_required NUMERIC(14, 2) NOT NULL DEFAULT 0 CHECK (deposit_required >= 0),
+    status TEXT NOT NULL DEFAULT 'pending_payment'
+        CHECK (status IN ('pending_payment', 'confirmed', 'cancelled', 'checked_out')),
     processed_by UUID NOT NULL REFERENCES public.user_profiles(id),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CHECK (end_date >= start_date)
+    CHECK (end_date IS NULL OR end_date >= start_date)
 );
 
 CREATE OR REPLACE FUNCTION public.prevent_property_booking_overlap()
@@ -184,7 +186,7 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 BEGIN
-    IF NEW.status = 'confirmed' THEN
+    IF NEW.status IN ('pending_payment', 'confirmed') THEN
         PERFORM 1
         FROM public.properties
         WHERE id = NEW.property_id
@@ -194,10 +196,10 @@ BEGIN
             SELECT 1
             FROM public.property_bookings pb
             WHERE pb.property_id = NEW.property_id
-              AND pb.status = 'confirmed'
+              AND pb.status IN ('pending_payment', 'confirmed')
               AND pb.id IS DISTINCT FROM NEW.id
-              AND NEW.start_date <= pb.end_date
-              AND NEW.end_date >= pb.start_date
+              AND (NEW.end_date IS NULL OR pb.start_date <= NEW.end_date)
+              AND (pb.end_date IS NULL OR pb.end_date >= NEW.start_date)
         ) THEN
             RAISE EXCEPTION 'This property is already booked for the selected date range.';
         END IF;
@@ -209,6 +211,29 @@ $$;
 CREATE TRIGGER trg_prevent_property_booking_overlap
 BEFORE INSERT OR UPDATE ON public.property_bookings
 FOR EACH ROW EXECUTE FUNCTION public.prevent_property_booking_overlap();
+
+CREATE OR REPLACE FUNCTION public.prevent_unauthorized_property_booking_status_change()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF TG_OP = 'INSERT'
+       AND NEW.status <> 'pending_payment'
+       AND NOT public.is_jasmin_owner() THEN
+        RAISE EXCEPTION 'New property bookings must await owner payment confirmation.';
+    END IF;
+    IF TG_OP = 'UPDATE'
+       AND OLD.status IS DISTINCT FROM NEW.status
+       AND NOT public.is_jasmin_owner() THEN
+        RAISE EXCEPTION 'Only an owner can change property booking status.';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER trg_prevent_unauthorized_property_booking_status_change
+BEFORE INSERT OR UPDATE ON public.property_bookings
+FOR EACH ROW EXECUTE FUNCTION public.prevent_unauthorized_property_booking_status_change();
 
 CREATE TABLE public.jewelry_inventory (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -395,20 +420,22 @@ BEGIN
     FROM public.business_units
     WHERE id = NEW.business_id;
 
+    IF v_threshold IS NULL THEN
+        v_threshold := 30000.00;
+    END IF;
+
     IF NEW.business_id = 'jewelry'
        AND NEW.category = 'Jewelry Sales Return / Refund'
        AND public.is_jasmin_owner() THEN
         NEW.status := 'APPROVED';
         NEW.gate_reason := 'Owner-authorized jewelry return/refund';
-        RETURN NEW;
-    END IF;
-
-    IF v_threshold IS NULL THEN
-        v_threshold := 30000.00;
-    END IF;
-
+    ELSIF NEW.business_id = 'real_estate'
+       AND NEW.category IN ('Property Rent Collection', 'Property Deposit Damage Charge')
+       AND public.is_jasmin_owner() THEN
+        NEW.status := 'APPROVED';
+        NEW.gate_reason := 'Owner-confirmed property receipt';
     -- Every jewelry transaction requires owner approval, regardless of amount.
-    IF NEW.business_id = 'jewelry' THEN
+    ELSIF NEW.business_id = 'jewelry' THEN
         NEW.status := 'PENDING_APPROVAL';
         NEW.gate_reason := 'All jewelry transactions require Owner authorization';
     -- Gate Condition 1: Amount exceeds PHP 30,000.00 threshold
